@@ -13,197 +13,296 @@ export const DEFAULT_PROFILE = {
   age: 34,
   heightCm: 179,
   ftp: 295,
-  grossEfficiencyPct: 22.0, // Tim Podlogar: 18-24% range (23.9% => 1 kJ = 1 kcal; ~22% typical trained amateur)
-  preRideLeadHours: 2, // Hours between pre-ride meal and ride start (1h -> ~1g/kg, 2h -> ~2g/kg, 3h -> ~3g/kg)
+  grossEfficiencyPct: 22.0,
+  preRideLeadHours: 2,
   activityLevel: 'desk', // 'desk' | 'light' | 'active'
   goalMode: 'cut', // 'maintain' | 'cut' | 'carb_load'
-  targetLossKgPerWeek: 0.35, // sustainable fat loss while preserving muscle & watts
-  tdeeAdjustmentKcal: 0, // adaptive TDEE calibration offset
+  targetLossKgPerWeek: 0.35,
+  tdeeAdjustmentKcal: 0,
   proteinGPerKgCut: 2.0,
   proteinGPerKgMaintain: 1.75,
   defaultWeightKg: 74.2,
   defaultBodyFatPct: 14.8,
 };
 
-// Modular Home Staple Meals — "Keep your current menu, just scale the carb & protein levers"
+// Flexible Ingredient-List Home Staples — add, edit, or remove ANY ingredient freely!
+// role: 'carb' (auto-scales with ride demand), 'protein' (auto-scales to hit protein), or 'fixed' (stays at set grams)
 export const DEFAULT_STAPLES = [
   {
-    id: 'staple-oats-whey',
-    name: 'Oats, Whey & Berries Bowl',
-    mealTypes: ['breakfast', 'snack'],
-    prepNote: 'Your regular morning bowl. Oats scale up on interval days and trim back on rest days.',
-    carbLever: {
-      name: 'Rolled Oats (dry)',
-      unit: 'g',
-      minGrams: 35,
-      maxGrams: 135,
-      defaultGrams: 75,
-      per100g: { carbs: 66.3, protein: 16.9, fat: 6.9, fiber: 10.6, iron: 4.7, calcium: 54, vitD: 0, magnesium: 177, sodium: 2 },
-    },
-    proteinAnchor: {
-      name: 'Whey Isolate / Greek Yogurt',
-      unit: 'g',
-      minGrams: 25,
-      maxGrams: 55,
-      defaultGrams: 35,
-      per100g: { carbs: 4.0, protein: 82.0, fat: 1.5, fiber: 0, iron: 0.5, calcium: 420, vitD: 0, magnesium: 55, sodium: 180 },
-    },
-    baseFixed: {
-      label: 'Blueberries (80g), Banana (½), Cinnamon & Chia (10g)',
-      carbs: 24,
-      protein: 3,
-      fat: 3.5,
-      micros: { fiber: 6.2, iron: 1.1, calcium: 72, vitD: 0, magnesium: 52, sodium: 4 },
-    },
+    id: 'staple-oats-berries',
+    name: 'Oats & Berries',
+    mealTypes: ['breakfast'],
+    prepNote: 'Simple everyday breakfast. Oats automatically scale up on hard ride days and trim back on rest days.',
+    ingredients: [
+      {
+        id: 'ing-oats',
+        name: 'Rolled Oats (dry)',
+        grams: 75,
+        minGrams: 35,
+        maxGrams: 140,
+        role: 'carb',
+        per100g: { carbs: 66.3, protein: 16.9, fat: 6.9, fiber: 10.6, iron: 4.7, calcium: 54, vitD: 0, magnesium: 177, sodium: 2 },
+      },
+      {
+        id: 'ing-berries',
+        name: 'Blueberries (fresh / frozen)',
+        grams: 100,
+        minGrams: 50,
+        maxGrams: 200,
+        role: 'fixed',
+        per100g: { carbs: 14.5, protein: 0.7, fat: 0.3, fiber: 2.4, iron: 0.3, calcium: 6, vitD: 0, magnesium: 6, sodium: 1 },
+      },
+      {
+        id: 'ing-milk',
+        name: 'Milk (2% / semi-skimmed)',
+        grams: 200,
+        minGrams: 100,
+        maxGrams: 350,
+        role: 'fixed',
+        per100g: { carbs: 4.8, protein: 3.3, fat: 2.0, fiber: 0, iron: 0, calcium: 120, vitD: 1.2, magnesium: 11, sodium: 44 },
+      },
+    ],
   },
   {
     id: 'staple-eggs-sourdough',
-    name: 'Eggs, Sourdough Toast & Avocado',
+    name: 'Eggs, Sourdough & Avocado',
     mealTypes: ['breakfast', 'lunch'],
-    prepNote: 'Ideal for Rest or Easy Z2 days (higher fat/satiety) — add extra sourdough on moderate days.',
-    carbLever: {
-      name: 'Sourdough Bread',
-      unit: 'g',
-      minGrams: 45,
-      maxGrams: 160,
-      defaultGrams: 90,
-      per100g: { carbs: 51.0, protein: 9.2, fat: 1.2, fiber: 2.8, iron: 3.2, calcium: 52, vitD: 0, magnesium: 28, sodium: 520 },
-    },
-    proteinAnchor: {
-      name: 'Whole Eggs + Egg Whites',
-      unit: 'g',
-      minGrams: 120,
-      maxGrams: 280,
-      defaultGrams: 190,
-      per100g: { carbs: 0.8, protein: 12.2, fat: 6.2, fiber: 0, iron: 1.5, calcium: 42, vitD: 1.8, magnesium: 12, sodium: 145 },
-    },
-    baseFixed: {
-      label: 'Avocado (45g), Spinach (50g) & Cherry Tomatoes',
-      carbs: 7,
-      protein: 2.5,
-      fat: 7.0,
-      micros: { fiber: 4.8, iron: 1.8, calcium: 58, vitD: 0, magnesium: 54, sodium: 45 },
-    },
+    prepNote: 'Great for Rest or Easy Z2 days — sourdough scales up when you need extra carbs.',
+    ingredients: [
+      {
+        id: 'ing-sourdough',
+        name: 'Sourdough Bread',
+        grams: 90,
+        minGrams: 45,
+        maxGrams: 160,
+        role: 'carb',
+        per100g: { carbs: 51.0, protein: 9.2, fat: 1.2, fiber: 2.8, iron: 3.2, calcium: 52, vitD: 0, magnesium: 28, sodium: 520 },
+      },
+      {
+        id: 'ing-eggs',
+        name: 'Whole Eggs',
+        grams: 150,
+        minGrams: 100,
+        maxGrams: 250,
+        role: 'protein',
+        per100g: { carbs: 0.7, protein: 12.6, fat: 9.5, fiber: 0, iron: 1.8, calcium: 56, vitD: 2.0, magnesium: 12, sodium: 142 },
+      },
+      {
+        id: 'ing-avocado',
+        name: 'Avocado',
+        grams: 50,
+        minGrams: 25,
+        maxGrams: 100,
+        role: 'fixed',
+        per100g: { carbs: 8.5, protein: 2.0, fat: 14.7, fiber: 6.7, iron: 0.6, calcium: 12, vitD: 0, magnesium: 29, sodium: 7 },
+      },
+    ],
   },
   {
     id: 'staple-chicken-rice',
-    name: 'Chicken, Jasmine Rice & Greens',
+    name: 'Chicken, Jasmine Rice & Broccoli',
     mealTypes: ['lunch', 'dinner'],
-    prepNote: 'Classic WorldTour recovery plate. Jasmine rice scales cleanly from 120g (rest) to 380g (pre-load).',
-    carbLever: {
-      name: 'Cooked Jasmine Rice',
-      unit: 'g',
-      minGrams: 110,
-      maxGrams: 420,
-      defaultGrams: 230,
-      per100g: { carbs: 28.2, protein: 2.7, fat: 0.3, fiber: 0.4, iron: 0.8, calcium: 10, vitD: 0, magnesium: 12, sodium: 2 },
-    },
-    proteinAnchor: {
-      name: 'Chicken Breast (cooked)',
-      unit: 'g',
-      minGrams: 110,
-      maxGrams: 230,
-      defaultGrams: 160,
-      per100g: { carbs: 0, protein: 31.0, fat: 3.6, fiber: 0, iron: 1.0, calcium: 15, vitD: 0.1, magnesium: 29, sodium: 74 },
-    },
-    baseFixed: {
-      label: 'Broccoli & Peppers (150g), Olive Oil (8g) & Soy/Herbs',
-      carbs: 10,
-      protein: 4,
-      fat: 8.5,
-      micros: { fiber: 4.4, iron: 1.4, calcium: 68, vitD: 0, magnesium: 36, sodium: 380 },
-    },
+    prepNote: 'Classic cycling recovery dinner — rice scales smoothly from 120g on rest days to 400g on hard days.',
+    ingredients: [
+      {
+        id: 'ing-rice',
+        name: 'White / Jasmine Rice (cooked)',
+        grams: 230,
+        minGrams: 110,
+        maxGrams: 420,
+        role: 'carb',
+        per100g: { carbs: 28.2, protein: 2.7, fat: 0.3, fiber: 0.4, iron: 0.8, calcium: 10, vitD: 0, magnesium: 12, sodium: 2 },
+      },
+      {
+        id: 'ing-chicken',
+        name: 'Chicken Breast (cooked)',
+        grams: 160,
+        minGrams: 100,
+        maxGrams: 230,
+        role: 'protein',
+        per100g: { carbs: 0, protein: 31.0, fat: 3.6, fiber: 0, iron: 1.0, calcium: 15, vitD: 0.1, magnesium: 29, sodium: 74 },
+      },
+      {
+        id: 'ing-broccoli',
+        name: 'Broccoli',
+        grams: 140,
+        minGrams: 60,
+        maxGrams: 250,
+        role: 'fixed',
+        per100g: { carbs: 6.6, protein: 2.8, fat: 0.4, fiber: 2.6, iron: 0.7, calcium: 47, vitD: 0, magnesium: 21, sodium: 33 },
+      },
+      {
+        id: 'ing-oil',
+        name: 'Extra Virgin Olive Oil',
+        grams: 8,
+        minGrams: 0,
+        maxGrams: 25,
+        role: 'fixed',
+        per100g: { carbs: 0, protein: 0, fat: 100.0, fiber: 0, iron: 0.6, calcium: 1, vitD: 0, magnesium: 0, sodium: 2 },
+      },
+    ],
   },
   {
     id: 'staple-salmon-potatoes',
-    name: 'Baked Salmon, Baby Potatoes & Veg',
+    name: 'Baked Salmon & Baby Potatoes',
     mealTypes: ['dinner'],
-    prepNote: 'Anti-inflammatory omega-3 + Vitamin D recovery dinner. Potatoes scale smoothly for next-day carb load.',
-    carbLever: {
-      name: 'Roasted Baby Potatoes',
-      unit: 'g',
-      minGrams: 140,
-      maxGrams: 480,
-      defaultGrams: 280,
-      per100g: { carbs: 20.1, protein: 2.2, fat: 0.1, fiber: 2.2, iron: 0.8, calcium: 12, vitD: 0, magnesium: 23, sodium: 6 },
-    },
-    proteinAnchor: {
-      name: 'Atlantic Salmon Fillet',
-      unit: 'g',
-      minGrams: 120,
-      maxGrams: 220,
-      defaultGrams: 160,
-      per100g: { carbs: 0, protein: 22.1, fat: 12.4, fiber: 0, iron: 0.8, calcium: 12, vitD: 11.2, magnesium: 29, sodium: 59 },
-    },
-    baseFixed: {
-      label: 'Asparagus & Green Beans (140g) + Lemon Olive Oil (5g)',
-      carbs: 8,
-      protein: 3,
-      fat: 5.2,
-      micros: { fiber: 3.6, iron: 2.2, calcium: 42, vitD: 0, magnesium: 26, sodium: 180 },
-    },
+    prepNote: 'Omega-3 + Vitamin D recovery dinner. Potatoes scale up when tomorrow is a hard ride.',
+    ingredients: [
+      {
+        id: 'ing-potatoes',
+        name: 'Potatoes (roasted)',
+        grams: 280,
+        minGrams: 140,
+        maxGrams: 480,
+        role: 'carb',
+        per100g: { carbs: 20.1, protein: 2.2, fat: 0.1, fiber: 2.2, iron: 0.8, calcium: 12, vitD: 0, magnesium: 23, sodium: 6 },
+      },
+      {
+        id: 'ing-salmon',
+        name: 'Salmon Fillet (cooked)',
+        grams: 160,
+        minGrams: 110,
+        maxGrams: 220,
+        role: 'protein',
+        per100g: { carbs: 0, protein: 22.1, fat: 12.4, fiber: 0, iron: 0.8, calcium: 12, vitD: 11.2, magnesium: 29, sodium: 59 },
+      },
+      {
+        id: 'ing-asparagus',
+        name: 'Asparagus',
+        grams: 130,
+        minGrams: 60,
+        maxGrams: 240,
+        role: 'fixed',
+        per100g: { carbs: 3.9, protein: 2.2, fat: 0.1, fiber: 2.1, iron: 2.1, calcium: 24, vitD: 0, magnesium: 14, sodium: 2 },
+      },
+    ],
   },
   {
     id: 'staple-pasta-turkey',
-    name: 'High-Carb Pasta & Lean Turkey Bolognese',
+    name: 'Pasta & Lean Turkey Bolognese',
     mealTypes: ['dinner', 'lunch'],
-    prepNote: 'Go-to dinner the night before Threshold/VO2max intervals or long weekend rides.',
-    carbLever: {
-      name: 'Dry Pasta (weighed dry)',
-      unit: 'g',
-      minGrams: 55,
-      maxGrams: 165,
-      defaultGrams: 105,
-      per100g: { carbs: 74.7, protein: 13.0, fat: 1.5, fiber: 3.2, iron: 3.3, calcium: 21, vitD: 0, magnesium: 53, sodium: 6 },
-    },
-    proteinAnchor: {
-      name: 'Lean Ground Turkey (cooked)',
-      unit: 'g',
-      minGrams: 100,
-      maxGrams: 210,
-      defaultGrams: 140,
-      per100g: { carbs: 0, protein: 27.4, fat: 6.5, fiber: 0, iron: 1.9, calcium: 24, vitD: 0.3, magnesium: 28, sodium: 92 },
-    },
-    baseFixed: {
-      label: 'Crushed Tomato Sauce (150g), Herbs & Parmesan (12g)',
-      carbs: 11,
-      protein: 5.5,
-      fat: 4.5,
-      micros: { fiber: 2.8, iron: 1.4, calcium: 165, vitD: 0.1, magnesium: 28, sodium: 420 },
-    },
+    prepNote: 'Easy night-before-intervals meal.',
+    ingredients: [
+      {
+        id: 'ing-pasta',
+        name: 'Pasta (dry)',
+        grams: 105,
+        minGrams: 55,
+        maxGrams: 165,
+        role: 'carb',
+        per100g: { carbs: 74.7, protein: 13.0, fat: 1.5, fiber: 3.2, iron: 3.3, calcium: 21, vitD: 0, magnesium: 53, sodium: 6 },
+      },
+      {
+        id: 'ing-turkey',
+        name: 'Lean Ground Turkey (cooked)',
+        grams: 140,
+        minGrams: 100,
+        maxGrams: 210,
+        role: 'protein',
+        per100g: { carbs: 0, protein: 27.4, fat: 6.5, fiber: 0, iron: 1.9, calcium: 24, vitD: 0.3, magnesium: 28, sodium: 92 },
+      },
+      {
+        id: 'ing-sauce',
+        name: 'Tomato Pasta Sauce',
+        grams: 140,
+        minGrams: 80,
+        maxGrams: 250,
+        role: 'fixed',
+        per100g: { carbs: 7.2, protein: 1.6, fat: 1.5, fiber: 1.8, iron: 0.8, calcium: 18, vitD: 0, magnesium: 16, sodium: 320 },
+      },
+    ],
   },
   {
-    id: 'staple-recovery-shake',
-    name: 'Post-Ride Greek Yogurt, Banana & Honey',
+    id: 'staple-yogurt-banana',
+    name: 'Greek Yogurt, Banana & Honey',
     mealTypes: ['snack', 'breakfast'],
-    prepNote: 'Fast 3:1 carb-to-protein glycogen reload within 45 min after hard sessions.',
-    carbLever: {
-      name: 'Banana + Honey / Granola Mix',
-      unit: 'g',
-      minGrams: 60,
-      maxGrams: 220,
-      defaultGrams: 135,
-      per100g: { carbs: 36.0, protein: 1.8, fat: 1.0, fiber: 2.8, iron: 0.5, calcium: 12, vitD: 0, magnesium: 34, sodium: 5 },
-    },
-    proteinAnchor: {
-      name: '0% Greek Yogurt / Skyr',
-      unit: 'g',
-      minGrams: 150,
-      maxGrams: 320,
-      defaultGrams: 230,
-      per100g: { carbs: 3.8, protein: 10.3, fat: 0.4, fiber: 0, iron: 0.1, calcium: 115, vitD: 0.4, magnesium: 11, sodium: 36 },
-    },
-    baseFixed: {
-      label: 'Pinch of Sea Salt & Berries (50g)',
-      carbs: 6,
-      protein: 0.5,
-      fat: 0.2,
-      micros: { fiber: 1.4, iron: 0.2, calcium: 12, vitD: 0, magnesium: 8, sodium: 260 },
-    },
+    prepNote: 'Fast recovery snack after a ride.',
+    ingredients: [
+      {
+        id: 'ing-gy',
+        name: 'Greek Yogurt (0% fat)',
+        grams: 220,
+        minGrams: 140,
+        maxGrams: 340,
+        role: 'protein',
+        per100g: { carbs: 3.6, protein: 10.2, fat: 0.4, fiber: 0, iron: 0.1, calcium: 110, vitD: 0.4, magnesium: 11, sodium: 36 },
+      },
+      {
+        id: 'ing-banana',
+        name: 'Banana',
+        grams: 120,
+        minGrams: 60,
+        maxGrams: 220,
+        role: 'carb',
+        per100g: { carbs: 22.8, protein: 1.1, fat: 0.3, fiber: 2.6, iron: 0.3, calcium: 5, vitD: 0, magnesium: 27, sodium: 1 },
+      },
+      {
+        id: 'ing-honey',
+        name: 'Honey',
+        grams: 20,
+        minGrams: 5,
+        maxGrams: 50,
+        role: 'carb',
+        per100g: { carbs: 82.4, protein: 0.3, fat: 0, fiber: 0.2, iron: 0.4, calcium: 6, vitD: 0, magnesium: 2, sodium: 4 },
+      },
+    ],
   },
 ];
 
-// Realistic 7-day cycling week centered around today
+// Seamlessly migrate any previously saved legacy staples into the flexible ingredients[] format
+export function migrateStaple(staple) {
+  if (!staple) return null;
+  if (Array.isArray(staple.ingredients) && staple.ingredients.length > 0) {
+    return staple;
+  }
+  const ingredients = [];
+  if (staple.carbLever) {
+    ingredients.push({
+      id: `${staple.id}-carb`,
+      name: staple.carbLever.name,
+      grams: staple.carbLever.defaultGrams || 80,
+      minGrams: staple.carbLever.minGrams || 30,
+      maxGrams: staple.carbLever.maxGrams || 300,
+      role: 'carb',
+      per100g: staple.carbLever.per100g || { carbs: 50, protein: 5, fat: 1 },
+    });
+  }
+  if (staple.proteinAnchor) {
+    ingredients.push({
+      id: `${staple.id}-prot`,
+      name: staple.proteinAnchor.name,
+      grams: staple.proteinAnchor.defaultGrams || 140,
+      minGrams: staple.proteinAnchor.minGrams || 50,
+      maxGrams: staple.proteinAnchor.maxGrams || 250,
+      role: 'protein',
+      per100g: staple.proteinAnchor.per100g || { carbs: 0, protein: 25, fat: 4 },
+    });
+  }
+  if (staple.baseFixed) {
+    ingredients.push({
+      id: `${staple.id}-base`,
+      name: staple.baseFixed.label || 'Toppings & Veg',
+      grams: 100,
+      minGrams: 50,
+      maxGrams: 200,
+      role: 'fixed',
+      per100g: {
+        carbs: staple.baseFixed.carbs || 0,
+        protein: staple.baseFixed.protein || 0,
+        fat: staple.baseFixed.fat || 0,
+        ...(staple.baseFixed.micros || {}),
+      },
+    });
+  }
+  return {
+    id: staple.id,
+    name: staple.name,
+    mealTypes: staple.mealTypes || ['dinner'],
+    prepNote: staple.prepNote || '',
+    ingredients,
+  };
+}
+
 export function createDefaultSessions() {
   return [
     {
@@ -307,12 +406,11 @@ export function createDefaultSessions() {
   ];
 }
 
-// 14 days of realistic Withings morning scale readings (showing steady fat loss + normal glycogen water noise)
 export function createDefaultBiometrics() {
   const series = [
     { offset: -13, w: 75.1, bf: 15.4, rhr: 48, hrv: 72 },
     { offset: -12, w: 74.9, bf: 15.3, rhr: 47, hrv: 75 },
-    { offset: -11, w: 75.3, bf: 15.3, rhr: 49, hrv: 68 }, // post high-carb water bump
+    { offset: -11, w: 75.3, bf: 15.3, rhr: 49, hrv: 68 },
     { offset: -10, w: 74.8, bf: 15.2, rhr: 47, hrv: 76 },
     { offset: -9, w: 74.7, bf: 15.2, rhr: 46, hrv: 79 },
     { offset: -8, w: 74.9, bf: 15.1, rhr: 48, hrv: 74 },
@@ -344,15 +442,15 @@ export function createDefaultLogs() {
         id: 'log-sample-bfast',
         slot: 'breakfast',
         type: 'staple',
-        stapleId: 'staple-oats-whey',
-        title: 'Oats, Whey & Berries Bowl',
-        detail: '95g Rolled Oats · 38g Whey Isolate + Berries & Banana',
-        carbs: 89,
-        protein: 50,
+        stapleId: 'staple-oats-berries',
+        title: 'Oats & Berries',
+        detail: '95g Rolled Oats · 100g Blueberries · 200g Milk (2%)',
+        carbs: 87,
+        protein: 23,
         fat: 11,
-        kcal: 655,
+        kcal: 539,
         uncertaintyPct: 0,
-        micros: { fiber: 16.3, iron: 5.8, calcium: 283, vitD: 0, magnesium: 241, sodium: 74 },
+        micros: { fiber: 12.5, iron: 4.8, calcium: 297, vitD: 2.4, magnesium: 196, sodium: 91 },
         loggedAt: '07:35',
       },
     ],

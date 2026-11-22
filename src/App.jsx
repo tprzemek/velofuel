@@ -15,6 +15,7 @@ import {
   createDefaultLogs,
   createDefaultSessions,
   getIsoDate,
+  migrateStaple,
 } from './engine/defaultData';
 import { computeBiometricsSummary } from './engine/biometricsEngine';
 import { computeDailyPlan } from './engine/fuelingEngine';
@@ -25,6 +26,7 @@ import BodyView from './components/BodyView';
 import SyncView from './components/SyncView';
 import StapleScalerModal from './components/StapleScalerModal';
 import WorkMealModal from './components/WorkMealModal';
+import QuickFoodModal from './components/QuickFoodModal';
 
 const STORAGE_KEY = 'velofuel_state_v1';
 
@@ -33,9 +35,13 @@ function loadInitialState() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
+      const migratedStaples =
+        Array.isArray(parsed.staples) && parsed.staples.length
+          ? parsed.staples.map(migrateStaple).filter(Boolean)
+          : DEFAULT_STAPLES;
       return {
         profile: { ...DEFAULT_PROFILE, ...(parsed.profile || {}) },
-        staples: Array.isArray(parsed.staples) && parsed.staples.length ? parsed.staples : DEFAULT_STAPLES,
+        staples: migratedStaples.length ? migratedStaples : DEFAULT_STAPLES,
         sessions: Array.isArray(parsed.sessions) && parsed.sessions.length ? parsed.sessions : createDefaultSessions(),
         biometrics: Array.isArray(parsed.biometrics) && parsed.biometrics.length ? parsed.biometrics : createDefaultBiometrics(),
         logsByDate: parsed.logsByDate || createDefaultLogs(),
@@ -84,6 +90,7 @@ export default function App() {
 
   // Modals
   const [stapleModal, setStapleModal] = useState({ open: false, slotInfo: null, remaining: null });
+  const [quickFoodModal, setQuickFoodModal] = useState({ open: false, slotInfo: null });
   const [workModal, setWorkModal] = useState({ open: false, slotInfo: null });
 
   useEffect(() => {
@@ -130,7 +137,6 @@ export default function App() {
 
   const selectedLogs = state.logsByDate[selectedDate] || [];
 
-  // Handlers
   const handleLogEntry = (entry) => {
     setState((prev) => ({
       ...prev,
@@ -158,7 +164,7 @@ export default function App() {
       slot: slot.slot,
       type: 'on_bike',
       title: `On-Bike Mix & Gels (${onBikePlan.carbsPerHour}g/hr)`,
-      detail: `${onBikePlan.bottles} bottles · ${onBikePlan.totalSodiumMg}mg Na+`,
+      detail: `${onBikePlan.bottles} bottles · ${onBikePlan.totalSodiumMg}mg sodium`,
       carbs: onBikePlan.totalCarbs,
       protein: 0,
       fat: 0,
@@ -205,9 +211,15 @@ export default function App() {
     showToast(`Saved ${sessionObj.title} for ${sessionObj.date}`);
   };
 
-  const handleAddStaple = (staple) => {
-    setState((prev) => ({ ...prev, staples: [staple, ...prev.staples] }));
-    showToast(`Added "${staple.name}" to your Home Staples.`);
+  const handleSaveStaple = (staple) => {
+    setState((prev) => {
+      const exists = prev.staples.some((s) => s.id === staple.id);
+      const next = exists
+        ? prev.staples.map((s) => (s.id === staple.id ? staple : s))
+        : [staple, ...prev.staples];
+      return { ...prev, staples: next };
+    });
+    showToast(`Saved "${staple.name}" to your Home Staples.`);
   };
 
   const handleDeleteStaple = (id) => {
@@ -249,7 +261,6 @@ export default function App() {
     }
     setState((prev) => {
       const sessMap = new Map(prev.sessions.map((s) => [s.date, s]));
-      // Apply planned first, then completed (completed overrides planned for same day)
       (syncData.plannedSessions || []).forEach((s) => {
         const existing = sessMap.get(s.date);
         if (!existing || existing.status !== 'completed') {
@@ -283,7 +294,10 @@ export default function App() {
     setState((prev) => ({
       ...prev,
       profile: { ...prev.profile, ...(parsed.profile || {}) },
-      staples: Array.isArray(parsed.staples) && parsed.staples.length ? parsed.staples : prev.staples,
+      staples:
+        Array.isArray(parsed.staples) && parsed.staples.length
+          ? parsed.staples.map(migrateStaple).filter(Boolean)
+          : prev.staples,
       sessions: Array.isArray(parsed.sessions) ? parsed.sessions : prev.sessions,
       biometrics: Array.isArray(parsed.biometrics) ? parsed.biometrics : prev.biometrics,
       logsByDate: parsed.logsByDate || prev.logsByDate,
@@ -343,6 +357,7 @@ export default function App() {
             logs={selectedLogs}
             biometricsSummary={biometricsSummary}
             onOpenStapleModal={(slotInfo, remaining) => setStapleModal({ open: true, slotInfo, remaining })}
+            onOpenQuickFoodModal={(slotInfo) => setQuickFoodModal({ open: true, slotInfo })}
             onOpenWorkModal={(slotInfo) => setWorkModal({ open: true, slotInfo })}
             onDeleteLog={handleDeleteLog}
             onLogOnBike={handleLogOnBike}
@@ -354,7 +369,7 @@ export default function App() {
         {activeTab === 'staples' && (
           <StaplesView
             staples={state.staples}
-            onAddStaple={handleAddStaple}
+            onSaveStaple={handleSaveStaple}
             onDeleteStaple={handleDeleteStaple}
           />
         )}
@@ -433,6 +448,13 @@ export default function App() {
         slotInfo={stapleModal.slotInfo}
         staples={state.staples}
         remainingMacros={stapleModal.remaining}
+        onLogEntry={handleLogEntry}
+      />
+
+      <QuickFoodModal
+        isOpen={quickFoodModal.open}
+        onClose={() => setQuickFoodModal({ open: false, slotInfo: null })}
+        slotInfo={quickFoodModal.slotInfo}
         onLogEntry={handleLogEntry}
       />
 

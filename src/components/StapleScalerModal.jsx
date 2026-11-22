@@ -21,8 +21,7 @@ export default function StapleScalerModal({
     slotKey: '',
     stapleId: '',
     balanceDayMode: null,
-    carbOverride: null,
-    proteinOverride: null,
+    gramsOverrides: {},
   });
 
   const activeState =
@@ -32,8 +31,7 @@ export default function StapleScalerModal({
           slotKey,
           stapleId: matchingStaples[0]?.id || '',
           balanceDayMode: slotKey === 'dinner',
-          carbOverride: null,
-          proteinOverride: null,
+          gramsOverrides: {},
         };
 
   const selectedStaple = useMemo(
@@ -66,9 +64,19 @@ export default function StapleScalerModal({
 
   if (!isOpen || !slotInfo || !selectedStaple || !autoScaled) return null;
 
-  const carbGrams = activeState.carbOverride ?? autoScaled.carbGrams;
-  const proteinGrams = activeState.proteinOverride ?? autoScaled.proteinGrams;
-  const liveCalc = computeStapleNutrition(selectedStaple, carbGrams, proteinGrams);
+  const mergedGrams = { ...autoScaled.gramsById, ...(activeState.gramsOverrides || {}) };
+  const liveCalc = computeStapleNutrition(selectedStaple, mergedGrams);
+
+  const setIngredientGrams = (ingId, val) => {
+    setSelectionState({
+      ...activeState,
+      slotKey,
+      gramsOverrides: {
+        ...(activeState.gramsOverrides || {}),
+        [ingId]: Math.max(0, Number(val) || 0),
+      },
+    });
+  };
 
   const handleSave = () => {
     onLogEntry({
@@ -95,13 +103,13 @@ export default function StapleScalerModal({
         <div className="modal-handle" />
         <div className="modal-head">
           <div>
-            <h2 className="modal-title">Scale Home Staple · {slotInfo.label}</h2>
+            <h2 className="modal-title">Scale Home Meal · {slotInfo.label}</h2>
             <div className="muted-text" style={{ marginTop: 2 }}>
               Target: <strong className="mono">{targetCarbs}g C</strong> ·{' '}
               <strong className="mono">{targetProtein}g P</strong>
             </div>
           </div>
-          <button className="icon-btn" onClick={onClose} aria-label="Close">
+          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
             <X size={18} />
           </button>
         </div>
@@ -127,8 +135,7 @@ export default function StapleScalerModal({
                     ...activeState,
                     slotKey,
                     balanceDayMode: !balanceDayMode,
-                    carbOverride: null,
-                    proteinOverride: null,
+                    gramsOverrides: {},
                   })
                 }
               >
@@ -139,7 +146,7 @@ export default function StapleScalerModal({
         )}
 
         <div className="field" style={{ marginBottom: 12 }}>
-          <label htmlFor="staple-select">Choose from your regular meals</label>
+          <label htmlFor="staple-select">Choose from your Home Staples</label>
           <select
             id="staple-select"
             className="select"
@@ -149,8 +156,7 @@ export default function StapleScalerModal({
                 ...activeState,
                 slotKey,
                 stapleId: e.target.value,
-                carbOverride: null,
-                proteinOverride: null,
+                gramsOverrides: {},
               })
             }
           >
@@ -170,58 +176,58 @@ export default function StapleScalerModal({
             </span>
           </div>
 
-          <div className="range-row" style={{ marginBottom: 12 }}>
-            <div className="range-head">
-              <span>
-                <strong>Carb Lever:</strong> {selectedStaple.carbLever.name}
-              </span>
-              <strong className="mono" style={{ fontSize: '0.96rem', color: 'var(--code-high)' }}>
-                {carbGrams}g
-              </strong>
-            </div>
-            <input
-              type="range"
-              min={selectedStaple.carbLever.minGrams}
-              max={selectedStaple.carbLever.maxGrams}
-              step={5}
-              value={carbGrams}
-              onChange={(e) =>
-                setSelectionState({
-                  ...activeState,
-                  slotKey,
-                  carbOverride: Number(e.target.value),
-                })
-              }
-            />
-          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
+            {(selectedStaple.ingredients || []).map((ing) => {
+              const g = mergedGrams[ing.id] ?? ing.grams;
+              const maxG = Math.max(ing.maxGrams || ing.grams * 2, g + 40, 150);
+              const accent =
+                ing.role === 'carb'
+                  ? 'var(--code-high)'
+                  : ing.role === 'protein'
+                  ? 'var(--macro-protein)'
+                  : 'var(--ink-primary)';
 
-          <div className="range-row" style={{ marginBottom: 10 }}>
-            <div className="range-head">
-              <span>
-                <strong>Protein Anchor:</strong> {selectedStaple.proteinAnchor.name}
-              </span>
-              <strong className="mono" style={{ fontSize: '0.96rem', color: 'var(--macro-protein)' }}>
-                {proteinGrams}g
-              </strong>
-            </div>
-            <input
-              type="range"
-              min={selectedStaple.proteinAnchor.minGrams}
-              max={selectedStaple.proteinAnchor.maxGrams}
-              step={5}
-              value={proteinGrams}
-              onChange={(e) =>
-                setSelectionState({
-                  ...activeState,
-                  slotKey,
-                  proteinOverride: Number(e.target.value),
-                })
-              }
-            />
-          </div>
-
-          <div className="muted-text" style={{ fontSize: '0.74rem' }}>
-            <strong>Base included:</strong> {selectedStaple.baseFixed.label}
+              return (
+                <div className="range-row" key={ing.id}>
+                  <div className="range-head">
+                    <span style={{ fontSize: '0.8rem' }}>
+                      <strong>{ing.name}</strong>
+                      {ing.role === 'carb' && (
+                        <span style={{ fontSize: '0.68rem', color: 'var(--code-high)', marginLeft: 5, fontWeight: 700 }}>
+                          auto-carbs
+                        </span>
+                      )}
+                      {ing.role === 'protein' && (
+                        <span style={{ fontSize: '0.68rem', color: 'var(--macro-protein)', marginLeft: 5, fontWeight: 700 }}>
+                          auto-protein
+                        </span>
+                      )}
+                    </span>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      <input
+                        type="number"
+                        min={0}
+                        max={1500}
+                        step={5}
+                        className="input mono"
+                        style={{ width: 66, padding: '3px 6px', fontSize: '0.82rem', fontWeight: 700, color: accent }}
+                        value={g}
+                        onChange={(e) => setIngredientGrams(ing.id, e.target.value)}
+                      />
+                      <span style={{ fontSize: '0.72rem', color: 'var(--ink-muted)' }}>g</span>
+                    </div>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={maxG}
+                    step={5}
+                    value={g}
+                    onChange={(e) => setIngredientGrams(ing.id, e.target.value)}
+                  />
+                </div>
+              );
+            })}
           </div>
         </div>
 

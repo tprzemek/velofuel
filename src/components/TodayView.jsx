@@ -11,6 +11,7 @@ import {
   AlertTriangle,
   ArrowRight,
   Zap,
+  ScanBarcode,
 } from 'lucide-react';
 import { sumDailyLogs } from '../engine/fuelingEngine';
 
@@ -20,6 +21,7 @@ export default function TodayView({
   logs,
   biometricsSummary,
   onOpenStapleModal,
+  onOpenQuickFoodModal,
   onOpenWorkModal,
   onDeleteLog,
   onLogOnBike,
@@ -376,14 +378,21 @@ export default function TodayView({
                         onClick={() => onOpenStapleModal(slot, remaining)}
                       >
                         <Scale size={14} />
-                        {slot.slot === 'dinner' ? 'Auto-Scale Dinner' : 'Scale Home Staple'}
+                        {slot.slot === 'dinner' ? 'Auto-Scale Dinner' : 'Home Staple'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        onClick={() => onOpenQuickFoodModal(slot)}
+                      >
+                        <ScanBarcode size={14} /> Scan / Add
                       </button>
                       <button
                         type="button"
                         className="btn btn-sm"
                         onClick={() => onOpenWorkModal(slot)}
                       >
-                        <Camera size={14} /> Work Meal AI
+                        <Camera size={14} /> Work AI
                       </button>
                     </>
                   )}

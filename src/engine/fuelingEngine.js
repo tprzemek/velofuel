@@ -452,53 +452,102 @@ function buildMealTimeline({ category, todaySession, needsTomorrowPreload, carbs
   }));
 }
 
+// Flexible Ingredient-List Staple Auto-Scaling
+// Works whether a meal has 0, 1, or multiple 'carb' and 'protein' ingredients (e.g., just Oats + Berries!)
 export function scaleStapleToTargets(staple, targetCarbs, targetProtein) {
-  const base = staple.baseFixed || { carbs: 0, protein: 0, fat: 0, micros: {} };
-  const cLev = staple.carbLever;
-  const pAnc = staple.proteinAnchor;
+  const ingredients = Array.isArray(staple?.ingredients) ? staple.ingredients : [];
+  const gramsById = {};
+  ingredients.forEach((ing) => {
+    gramsById[ing.id] = ing.grams || 100;
+  });
 
-  const neededCarbs = Math.max(0, targetCarbs - (base.carbs || 0));
-  const rawCarbGrams = cLev.per100g.carbs > 0 ? (neededCarbs / cLev.per100g.carbs) * 100 : cLev.defaultGrams;
-  const carbGrams = Math.round(Math.min(cLev.maxGrams, Math.max(cLev.minGrams, rawCarbGrams)) / 5) * 5;
+  // 1. Scale 'carb' tagged ingredients proportionally to hit targetCarbs
+  const carbIngs = ingredients.filter((i) => i.role === 'carb' && (i.per100g?.carbs || 0) > 0);
+  const nonCarbIngs = ingredients.filter((i) => !carbIngs.includes(i));
+  const fixedCarbs = nonCarbIngs.reduce((s, i) => s + ((i.grams || 0) / 100) * (i.per100g?.carbs || 0), 0);
+  const baselineCarbPool = carbIngs.reduce((s, i) => s + ((i.grams || 0) / 100) * (i.per100g?.carbs || 0), 0);
 
-  const proteinFromCarb = (carbGrams / 100) * (cLev.per100g.protein || 0);
-  const neededProtein = Math.max(0, targetProtein - (base.protein || 0) - proteinFromCarb);
-  const rawProteinGrams = pAnc.per100g.protein > 0 ? (neededProtein / pAnc.per100g.protein) * 100 : pAnc.defaultGrams;
-  const proteinGrams = Math.round(Math.min(pAnc.maxGrams, Math.max(pAnc.minGrams, rawProteinGrams)) / 5) * 5;
+  if (carbIngs.length > 0 && baselineCarbPool > 0) {
+    const neededCarbs = Math.max(10, targetCarbs - fixedCarbs);
+    const ratio = neededCarbs / baselineCarbPool;
+    carbIngs.forEach((ing) => {
+      const minG = ing.minGrams ?? Math.max(10, Math.round((ing.grams || 60) * 0.4));
+      const maxG = ing.maxGrams ?? Math.max((ing.grams || 60) + 100, Math.round((ing.grams || 60) * 2.4));
+      const scaled = Math.round(Math.min(maxG, Math.max(minG, (ing.grams || 60) * ratio)) / 5) * 5;
+      gramsById[ing.id] = Math.max(5, scaled);
+    });
+  }
 
-  return computeStapleNutrition(staple, carbGrams, proteinGrams);
+  // 2. Scale 'protein' tagged ingredients (if any exist in this meal!) to hit targetProtein
+  const protIngs = ingredients.filter((i) => i.role === 'protein' && (i.per100g?.protein || 0) > 0);
+  const nonProtIngs = ingredients.filter((i) => !protIngs.includes(i));
+  const otherProtein = nonProtIngs.reduce(
+    (s, i) => s + ((gramsById[i.id] || 0) / 100) * (i.per100g?.protein || 0),
+    0
+  );
+  const baselineProtPool = protIngs.reduce((s, i) => s + ((i.grams || 0) / 100) * (i.per100g?.protein || 0), 0);
+
+  if (protIngs.length > 0 && baselineProtPool > 0) {
+    const neededProt = Math.max(8, targetProtein - otherProtein);
+    const ratio = neededProt / baselineProtPool;
+    protIngs.forEach((ing) => {
+      const minG = ing.minGrams ?? Math.max(15, Math.round((ing.grams || 100) * 0.45));
+      const maxG = ing.maxGrams ?? Math.max((ing.grams || 100) + 90, Math.round((ing.grams || 100) * 2.1));
+      const scaled = Math.round(Math.min(maxG, Math.max(minG, (ing.grams || 100) * ratio)) / 5) * 5;
+      gramsById[ing.id] = Math.max(5, scaled);
+    });
+  }
+
+  return computeStapleNutrition(staple, gramsById);
 }
 
-export function computeStapleNutrition(staple, carbGrams, proteinGrams) {
-  const base = staple.baseFixed || { carbs: 0, protein: 0, fat: 0, micros: {} };
-  const c = staple.carbLever.per100g;
-  const p = staple.proteinAnchor.per100g;
-  const cf = carbGrams / 100;
-  const pf = proteinGrams / 100;
+export function computeStapleNutrition(staple, gramsById = {}) {
+  const ingredients = Array.isArray(staple?.ingredients) ? staple.ingredients : [];
+  let carbs = 0;
+  let protein = 0;
+  let fat = 0;
+  const micros = { fiber: 0, iron: 0, calcium: 0, vitD: 0, magnesium: 0, sodium: 0 };
+  const resolvedItems = [];
 
-  const carbs = Math.round((base.carbs || 0) + c.carbs * cf + p.carbs * pf);
-  const protein = Math.round((base.protein || 0) + c.protein * cf + p.protein * pf);
-  const fat = Math.round((base.fat || 0) + c.fat * cf + p.fat * pf);
-  const kcal = carbs * 4 + protein * 4 + fat * 9;
+  for (const ing of ingredients) {
+    const g = gramsById[ing.id] !== undefined ? Number(gramsById[ing.id]) : Number(ing.grams || 0);
+    const f = Math.max(0, g) / 100;
+    const p = ing.per100g || {};
+    carbs += (p.carbs || 0) * f;
+    protein += (p.protein || 0) * f;
+    fat += (p.fat || 0) * f;
+    micros.fiber += (p.fiber || 0) * f;
+    micros.iron += (p.iron || 0) * f;
+    micros.calcium += (p.calcium || 0) * f;
+    micros.vitD += (p.vitD || 0) * f;
+    micros.magnesium += (p.magnesium || 0) * f;
+    micros.sodium += (p.sodium || 0) * f;
+    if (g > 0) {
+      resolvedItems.push({ ...ing, grams: Math.round(g) });
+    }
+  }
 
-  const micros = {
-    fiber: Number(((base.micros?.fiber || 0) + (c.fiber || 0) * cf + (p.fiber || 0) * pf).toFixed(1)),
-    iron: Number(((base.micros?.iron || 0) + (c.iron || 0) * cf + (p.iron || 0) * pf).toFixed(1)),
-    calcium: Math.round((base.micros?.calcium || 0) + (c.calcium || 0) * cf + (p.calcium || 0) * pf),
-    vitD: Number(((base.micros?.vitD || 0) + (c.vitD || 0) * cf + (p.vitD || 0) * pf).toFixed(1)),
-    magnesium: Math.round((base.micros?.magnesium || 0) + (c.magnesium || 0) * cf + (p.magnesium || 0) * pf),
-    sodium: Math.round((base.micros?.sodium || 0) + (c.sodium || 0) * cf + (p.sodium || 0) * pf),
-  };
+  const rCarbs = Math.round(carbs);
+  const rProt = Math.round(protein);
+  const rFat = Math.round(fat);
+  const kcal = rCarbs * 4 + rProt * 4 + rFat * 9;
 
   return {
-    carbGrams,
-    proteinGrams,
-    carbs,
-    protein,
-    fat,
+    gramsById,
+    resolvedItems,
+    carbs: rCarbs,
+    protein: rProt,
+    fat: rFat,
     kcal,
-    micros,
-    detail: `${carbGrams}g ${staple.carbLever.name} · ${proteinGrams}g ${staple.proteinAnchor.name} + ${base.label}`,
+    micros: {
+      fiber: Number(micros.fiber.toFixed(1)),
+      iron: Number(micros.iron.toFixed(1)),
+      calcium: Math.round(micros.calcium),
+      vitD: Number(micros.vitD.toFixed(1)),
+      magnesium: Math.round(micros.magnesium),
+      sodium: Math.round(micros.sodium),
+    },
+    detail: resolvedItems.map((i) => `${i.grams}g ${i.name}`).join(' · '),
   };
 }
 
