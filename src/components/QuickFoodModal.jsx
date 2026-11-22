@@ -1,7 +1,8 @@
 import { X } from 'lucide-react';
+import { formatFoodAmount } from '../engine/units';
 import FoodPickerPanel from './FoodPickerPanel';
 
-export default function QuickFoodModal({ isOpen, onClose, slotInfo, onLogEntry }) {
+export default function QuickFoodModal({ isOpen, onClose, slotInfo, units, onLogEntry }) {
   if (!isOpen || !slotInfo) return null;
 
   const handleAddSingleFood = (ing) => {
@@ -17,7 +18,8 @@ export default function QuickFoodModal({ isOpen, onClose, slotInfo, onLogEntry }
       slot: slotInfo.slot,
       type: 'food',
       title: ing.name,
-      detail: `${ing.grams}g`,
+      detail: formatFoodAmount(ing.grams, units),
+      ingredient: ing,
       carbs,
       protein,
       fat,
@@ -26,6 +28,7 @@ export default function QuickFoodModal({ isOpen, onClose, slotInfo, onLogEntry }
       micros: {
         fiber: Number(((p.fiber || 0) * f).toFixed(1)),
         iron: Number(((p.iron || 0) * f).toFixed(1)),
+        vitC: Math.round((p.vitC || 0) * f),
         calcium: Math.round((p.calcium || 0) * f),
         vitD: Number(((p.vitD || 0) * f).toFixed(1)),
         magnesium: Math.round((p.magnesium || 0) * f),
@@ -37,14 +40,14 @@ export default function QuickFoodModal({ isOpen, onClose, slotInfo, onLogEntry }
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose} role="dialog" aria-modal="true" aria-label="Add or Scan Food">
+    <div className="modal-backdrop" onClick={onClose} role="dialog" aria-modal="true" aria-label="Scan or Add Food">
       <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
         <div className="modal-handle" />
         <div className="modal-head">
           <div>
-            <h2 className="modal-title">Add / Scan Food · {slotInfo.label}</h2>
+            <h2 className="modal-title">Scan / Add Food · {slotInfo.label}</h2>
             <div className="muted-text" style={{ marginTop: 2 }}>
-              Search USDA whole foods, packaged brands, scan a barcode, or type a custom item.
+              Scan a barcode, search foods, or type a custom item. You can save logged foods as a reusable meal anytime.
             </div>
           </div>
           <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
@@ -52,7 +55,7 @@ export default function QuickFoodModal({ isOpen, onClose, slotInfo, onLogEntry }
           </button>
         </div>
 
-        <FoodPickerPanel onAddIngredient={handleAddSingleFood} buttonLabel="Log" />
+        <FoodPickerPanel onAddIngredient={handleAddSingleFood} buttonLabel="Log" units={units} />
       </div>
     </div>
   );

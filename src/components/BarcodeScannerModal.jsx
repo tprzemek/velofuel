@@ -1,9 +1,10 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { Camera, Search, X, Check, AlertCircle } from 'lucide-react';
 import { lookupBarcode } from '../engine/foodDatabase';
+import { foodDisplayToGrams, foodUnitLabel, formatFoodAmount, gramsToFoodDisplay } from '../engine/units';
 import NumericInput from './NumericInput';
 
-export default function BarcodeScannerModal({ isOpen, onClose, onSelectFood }) {
+export default function BarcodeScannerModal({ isOpen, onClose, onSelectFood, units, mode = 'food' }) {
   const readerId = useId().replace(/:/g, '');
   const scannerRef = useRef(null);
   const [cameraActive, setCameraActive] = useState(false);
@@ -50,7 +51,12 @@ export default function BarcodeScannerModal({ isOpen, onClose, onSelectFood }) {
     setLookupError('');
     setFoundFood(null);
     try {
-      const food = await lookupBarcode(code);
+      const food = await lookupBarcode(code, { allowZeroMacro: mode === 'supplement' });
+      if (mode === 'supplement') {
+        onSelectFood(food);
+        handleClose();
+        return;
+      }
       setFoundFood(food);
       setGrams(food.defaultGrams || 100);
       setRole(food.defaultRole || 'fixed');
@@ -90,6 +96,8 @@ export default function BarcodeScannerModal({ isOpen, onClose, onSelectFood }) {
 
   if (!isOpen) return null;
 
+  const foodUnit = foodUnitLabel(units);
+  const displayAmount = gramsToFoodDisplay(grams, units);
   const factor = (Number(grams) || 0) / 100;
   const previewMacros = foundFood
     ? {
@@ -99,6 +107,7 @@ export default function BarcodeScannerModal({ isOpen, onClose, onSelectFood }) {
         kcal: Math.round(
           (foundFood.per100g.carbs * 4 + foundFood.per100g.protein * 4 + foundFood.per100g.fat * 9) * factor
         ),
+        sodium: Math.round((foundFood.per100g.sodium || 0) * factor),
       }
     : null;
 
@@ -108,9 +117,13 @@ export default function BarcodeScannerModal({ isOpen, onClose, onSelectFood }) {
         <div className="modal-handle" />
         <div className="modal-head">
           <div>
-            <h2 className="modal-title">Scan Barcode</h2>
+            <h2 className="modal-title">
+              {mode === 'supplement' ? 'Scan Supplement Barcode' : 'Scan Barcode'}
+            </h2>
             <div className="muted-text" style={{ marginTop: 2 }}>
-              Pulls exact nutrition per 100g from Open Food Facts (3M+ products).
+              {mode === 'supplement'
+                ? 'Scan the bottle barcode to auto-fill product name and label nutrients.'
+                : 'Scan the package barcode, then enter how much you ate.'}
             </div>
           </div>
           <button type="button" className="icon-btn" onClick={handleClose} aria-label="Close">
@@ -184,19 +197,21 @@ export default function BarcodeScannerModal({ isOpen, onClose, onSelectFood }) {
             <div style={{ fontWeight: 800, fontSize: '0.92rem' }}>{foundFood.name}</div>
             <div className="muted-text mono" style={{ fontSize: '0.72rem', marginTop: 2 }}>
               Per 100g: {foundFood.per100g.carbs}g C · {foundFood.per100g.protein}g P · {foundFood.per100g.fat}g F
+              {foundFood.per100g.sodium > 0 ? ` · ${foundFood.per100g.sodium}mg Na` : ''}
             </div>
 
             <div className="field-grid" style={{ marginTop: 10 }}>
               <div className="field">
-                <label htmlFor="bc-grams">Amount (g)</label>
+                <label htmlFor="bc-grams">Amount ({foodUnit})</label>
                 <NumericInput
                   id="bc-grams"
-                  min={1}
-                  max={1500}
-                  fallback={100}
+                  min={foodUnit === 'g' ? 1 : 0.1}
+                  max={foodUnit === 'g' ? 1500 : 100}
+                  step={foodUnit === 'g' ? 1 : 0.1}
+                  fallback={foodUnit === 'g' ? 100 : 3.5}
                   className="input mono"
-                  value={grams}
-                  onChange={(val) => setGrams(val)}
+                  value={displayAmount}
+                  onChange={(val) => setGrams(Math.max(1, foodDisplayToGrams(val, units)))}
                 />
               </div>
               <div className="field">
@@ -234,13 +249,13 @@ export default function BarcodeScannerModal({ isOpen, onClose, onSelectFood }) {
               onClick={() => {
                 onSelectFood({
                   ...foundFood,
-                  grams: Math.max(5, Number(grams) || 100),
+                  grams: Math.max(1, Number(grams) || 100),
                   role,
                 });
-                onClose();
+                handleClose();
               }}
             >
-              <Check size={16} /> Add {foundFood.name} ({grams}g)
+              <Check size={16} /> Add {foundFood.name} ({formatFoodAmount(grams, units)})
             </button>
           </div>
         )}

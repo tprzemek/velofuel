@@ -1052,3 +1052,12 @@ input[type='range'] {
   box-shadow: 0 10px 26px rgba(20, 24, 28, 0.24);
   max-width: 90vw;
 }
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}

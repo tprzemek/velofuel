@@ -12,17 +12,31 @@ import {
   ArrowRight,
   Zap,
   ScanBarcode,
+  Pill,
+  BookmarkPlus,
+  Sparkles,
 } from 'lucide-react';
-import { sumDailyLogs } from '../engine/fuelingEngine';
+import { BOTTLE_SIZE_OPTIONS, scaleStapleToTargets, sumDailyLogs } from '../engine/fuelingEngine';
+import { formatLiquid, formatSodiumPractical } from '../engine/units';
+import NumericInput from './NumericInput';
 
 export default function TodayView({
   plan,
+  profile,
+  units,
   session,
   logs,
+  staples = [],
+  supplements = [],
   biometricsSummary,
   onOpenStapleModal,
   onOpenQuickFoodModal,
   onOpenWorkModal,
+  onOpenSupplementsModal,
+  onQuickLogStaple,
+  onSaveSlotAsStaple,
+  onLogDailyStack,
+  onSetRideBottleSize,
   onDeleteLog,
   onLogOnBike,
   onCompleteRide,
@@ -52,12 +66,22 @@ export default function TodayView({
 
   const microsList = [
     { key: 'iron', label: 'Iron', unit: 'mg', val: totals.micros.iron, target: plan.microTargets.iron },
+    { key: 'vitC', label: 'Vit C', unit: 'mg', val: totals.micros.vitC, target: plan.microTargets.vitC },
     { key: 'calcium', label: 'Calcium', unit: 'mg', val: totals.micros.calcium, target: plan.microTargets.calcium },
     { key: 'vitD', label: 'Vit D', unit: 'µg', val: totals.micros.vitD, target: plan.microTargets.vitD },
     { key: 'magnesium', label: 'Magnesium', unit: 'mg', val: totals.micros.magnesium, target: plan.microTargets.magnesium },
     { key: 'sodium', label: 'Sodium', unit: 'mg', val: totals.micros.sodium, target: plan.microTargets.sodium },
     { key: 'fiber', label: 'Fiber', unit: 'g', val: totals.micros.fiber, target: plan.microTargets.fiber },
   ];
+
+  const sodiumRemainingMg = Math.max(0, plan.microTargets.sodium - totals.micros.sodium);
+  const dailyStack = supplements.filter((s) => s.inDailyStack);
+  const loggedSuppEntries = logs.filter((l) => l.type === 'supplement');
+  const loggedSuppIds = new Set(loggedSuppEntries.map((l) => l.supplementId));
+  const unloggedDailyStack = dailyStack.filter((s) => !loggedSuppIds.has(s.id));
+
+  const formatLeftLabel = (diff) =>
+    diff >= 0 ? `${diff}g left` : `+${Math.abs(diff)}g over`;
 
   return (
     <>
@@ -77,7 +101,7 @@ export default function TodayView({
             <div className="hero-kcal-sub">
               {remaining.kcal >= 0 ? (
                 <>
-                  <strong className="mono" style={{ color: '#fff' }}>{remaining.kcal} kcal</strong> remaining
+                  <strong className="mono" style={{ color: '#fff' }}>{remaining.kcal} kcal</strong> left today
                 </>
               ) : (
                 <>
@@ -108,10 +132,21 @@ export default function TodayView({
           <div className="macro-bar-box">
             <div className="macro-bar-head">
               <span className="macro-bar-name">Carbs</span>
-              <span className="macro-bar-gkg mono">{plan.targets.carbsPerKg}g/kg · {plan.targets.carbsPct}%</span>
+              <span className="macro-bar-gkg mono">{plan.targets.carbsPerKg}g/kg</span>
             </div>
             <div className="macro-bar-val mono">
               {totals.carbs}<span>/{plan.targets.carbs}g</span>
+            </div>
+            <div
+              className="mono"
+              style={{
+                fontSize: '0.72rem',
+                fontWeight: 700,
+                marginTop: 2,
+                color: remaining.carbs >= 0 ? '#6CE0AE' : '#F7C77D',
+              }}
+            >
+              {formatLeftLabel(remaining.carbs)}
             </div>
             <div className="progress-track">
               <div className="progress-fill fill-carb" style={{ width: `${pct(totals.carbs, plan.targets.carbs)}%` }} />
@@ -121,10 +156,21 @@ export default function TodayView({
           <div className="macro-bar-box">
             <div className="macro-bar-head">
               <span className="macro-bar-name">Protein</span>
-              <span className="macro-bar-gkg mono">{plan.targets.proteinPerKg}g/kg · {plan.targets.proteinPct}%</span>
+              <span className="macro-bar-gkg mono">{plan.targets.proteinPerKg}g/kg</span>
             </div>
             <div className="macro-bar-val mono">
               {totals.protein}<span>/{plan.targets.protein}g</span>
+            </div>
+            <div
+              className="mono"
+              style={{
+                fontSize: '0.72rem',
+                fontWeight: 700,
+                marginTop: 2,
+                color: remaining.protein >= 0 ? '#85C5F2' : '#F7C77D',
+              }}
+            >
+              {formatLeftLabel(remaining.protein)}
             </div>
             <div className="progress-track">
               <div className="progress-fill fill-protein" style={{ width: `${pct(totals.protein, plan.targets.protein)}%` }} />
@@ -134,10 +180,21 @@ export default function TodayView({
           <div className="macro-bar-box">
             <div className="macro-bar-head">
               <span className="macro-bar-name">Fat</span>
-              <span className="macro-bar-gkg mono">{plan.targets.fatPerKg}g/kg · {plan.targets.fatPct}%</span>
+              <span className="macro-bar-gkg mono">{plan.targets.fatPerKg}g/kg</span>
             </div>
             <div className="macro-bar-val mono">
               {totals.fat}<span>/{plan.targets.fat}g</span>
+            </div>
+            <div
+              className="mono"
+              style={{
+                fontSize: '0.72rem',
+                fontWeight: 700,
+                marginTop: 2,
+                color: remaining.fat >= 0 ? '#F4BE76' : '#F2A194',
+              }}
+            >
+              {formatLeftLabel(remaining.fat)}
             </div>
             <div className="progress-track">
               <div className="progress-fill fill-fat" style={{ width: `${pct(totals.fat, plan.targets.fat)}%` }} />
@@ -218,26 +275,26 @@ export default function TodayView({
             <div className="field-grid">
               <div className="field">
                 <label htmlFor="actual-kj">Actual Power Work (kJ)</label>
-                <input
+                <NumericInput
                   id="actual-kj"
-                  type="number"
                   className="input mono"
                   value={actualKjInput}
-                  onChange={(e) => setActualKjInput(e.target.value)}
+                  onChange={setActualKjInput}
                   min={0}
                   max={8000}
+                  fallback={0}
                 />
               </div>
               <div className="field">
                 <label htmlFor="actual-min">Duration (min)</label>
-                <input
+                <NumericInput
                   id="actual-min"
-                  type="number"
                   className="input mono"
                   value={actualMinInput}
-                  onChange={(e) => setActualMinInput(e.target.value)}
+                  onChange={setActualMinInput}
                   min={0}
                   max={720}
+                  fallback={60}
                 />
               </div>
             </div>
@@ -266,12 +323,42 @@ export default function TodayView({
                 <div className="mini-stat-val mono">{plan.onBikePlan.totalCarbs} g</div>
               </div>
               <div className="mini-stat">
-                <div className="mini-stat-label">Fluids · Na+</div>
+                <div className="mini-stat-label">Bottles Needed</div>
                 <div className="mini-stat-val mono">
-                  {plan.onBikePlan.bottles}× · {plan.onBikePlan.sodiumMgPerHr}mg
+                  {plan.onBikePlan.bottles}× {plan.onBikePlan.bottleLabel}
                 </div>
               </div>
             </div>
+
+            {/* Per-Ride Bottle Size Selector */}
+            <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--ink-secondary)' }}>
+                Bottle size for this ride:
+              </span>
+              <div className="chip-row" role="group" aria-label="Ride bottle size">
+                {BOTTLE_SIZE_OPTIONS.map((ml) => {
+                  const active = plan.onBikePlan.bottleSizeMl === ml;
+                  return (
+                    <button
+                      key={ml}
+                      type="button"
+                      className="chip mono"
+                      style={{
+                        padding: '4px 8px',
+                        fontSize: '0.7rem',
+                        ...(active
+                          ? { background: 'var(--bg-carbon)', color: '#fff', borderColor: 'var(--bg-carbon)' }
+                          : {}),
+                      }}
+                      onClick={() => onSetRideBottleSize(plan.date, ml)}
+                    >
+                      {formatLiquid(ml, units)}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             <p className="muted-text" style={{ marginTop: 8, fontSize: '0.75rem' }}>
               <Droplets size={12} style={{ verticalAlign: '-2px', marginRight: 4 }} />
               {plan.onBikePlan.note}
@@ -298,8 +385,8 @@ export default function TodayView({
       {/* Meal-by-Meal Carb Coded Timeline */}
       <section aria-label="Meal Plan and Food Log">
         <div className="section-header" style={{ padding: '0 2px' }}>
-          <h2 className="section-title">Carb-Coded Meal Timeline</h2>
-          <span className="section-kicker">Home Scale + Work AI</span>
+          <h2 className="section-title">Daily Meal Timeline</h2>
+          <span className="section-kicker">Barcode · Saved Meals · Work AI</span>
         </div>
 
         <div className="meal-list">
@@ -307,6 +394,12 @@ export default function TodayView({
             const slotLogs = logs.filter((l) => l.slot === slot.slot);
             const isOnBike = slot.slot === 'on_bike';
             const codeClass = slot.carbCode.toLowerCase();
+            const pinnedStaple = !isOnBike ? staples.find((s) => s.dailySlot === slot.slot) : null;
+            const pinnedPreview = pinnedStaple
+              ? scaleStapleToTargets(pinnedStaple, slot.targetCarbs, slot.targetProtein)
+              : null;
+            const canSaveAsStaple =
+              !isOnBike && slotLogs.length > 0 && slotLogs.some((l) => l.type === 'food' && l.ingredient);
 
             return (
               <div className="meal-slot" key={slot.slot}>
@@ -361,6 +454,23 @@ export default function TodayView({
                   </div>
                 )}
 
+                {/* 1-Tap Log Usual Pinned Daily Meal (e.g. everyday breakfast) */}
+                {pinnedStaple && pinnedPreview && slotLogs.length === 0 && (
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-soft btn-block"
+                    style={{ marginTop: 9, justifyContent: 'space-between' }}
+                    onClick={() => onQuickLogStaple(slot, pinnedStaple)}
+                  >
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      <Sparkles size={14} /> Log Usual {slot.label}: <strong>{pinnedStaple.name}</strong>
+                    </span>
+                    <span className="mono" style={{ fontSize: '0.7rem' }}>
+                      {pinnedPreview.carbs}C · {pinnedPreview.protein}P
+                    </span>
+                  </button>
+                )}
+
                 <div className="meal-actions">
                   {isOnBike ? (
                     <button
@@ -374,18 +484,18 @@ export default function TodayView({
                     <>
                       <button
                         type="button"
+                        className="btn btn-sm btn-accent"
+                        onClick={() => onOpenQuickFoodModal(slot)}
+                      >
+                        <ScanBarcode size={14} /> Scan / Add
+                      </button>
+                      <button
+                        type="button"
                         className="btn btn-sm btn-primary"
                         onClick={() => onOpenStapleModal(slot, remaining)}
                       >
                         <Scale size={14} />
                         {slot.slot === 'dinner' ? 'Auto-Scale Dinner' : 'Home Staple'}
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-sm"
-                        onClick={() => onOpenQuickFoodModal(slot)}
-                      >
-                        <ScanBarcode size={14} /> Scan / Add
                       </button>
                       <button
                         type="button"
@@ -397,18 +507,36 @@ export default function TodayView({
                     </>
                   )}
                 </div>
+
+                {canSaveAsStaple && (
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    style={{ marginTop: 7, width: '100%', fontSize: '0.74rem' }}
+                    onClick={() => onSaveSlotAsStaple(slot, slotLogs)}
+                  >
+                    <BookmarkPlus size={14} /> Save Logged {slot.label} as Reusable Meal
+                  </button>
+                )}
               </div>
             );
           })}
         </div>
       </section>
 
-      {/* Key Endurance Vitamins & Minerals */}
+      {/* Key Endurance Vitamins, Minerals, Practical Sodium & Supplements */}
       <section className="card" aria-label="Key Vitamins and Minerals">
         <div className="section-header">
           <h2 className="section-title">Key Vitamins &amp; Minerals</h2>
-          <span className="section-kicker">Daily Recovery Basics</span>
+          <button
+            type="button"
+            className="btn btn-sm btn-soft"
+            onClick={onOpenSupplementsModal}
+          >
+            <Pill size={13} /> Supplements
+          </button>
         </div>
+
         <div className="micro-grid">
           {microsList.map((m) => {
             const p = pct(m.val, m.target);
@@ -434,6 +562,81 @@ export default function TodayView({
             );
           })}
         </div>
+
+        {/* Practical Sodium Helper (Table Salt / Electrolyte Tabs) */}
+        <div
+          className={`notice-strip ${sodiumRemainingMg <= 150 ? 'green' : 'slate'}`}
+          style={{ marginTop: 10, fontSize: '0.76rem' }}
+        >
+          <Droplets size={15} style={{ flexShrink: 0, marginTop: 2 }} />
+          <div>
+            {sodiumRemainingMg <= 150 ? (
+              <>
+                <strong>Sodium covered:</strong> Today&apos;s logged food &amp; ride drinks already meet your{' '}
+                <span className="mono">{plan.microTargets.sodium} mg</span> target — no extra salt needed.
+              </>
+            ) : (
+              <>
+                <strong>Sodium left today: {sodiumRemainingMg} mg</strong> ({formatSodiumPractical(sodiumRemainingMg, profile?.electrolyteTabMg || 500)}).
+                Scanned packaged foods count automatically — only add extra salt or tabs if your home-cooked meals were unsalted.
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Daily Supplements Quick-Log Bar */}
+        <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border-hairline)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--ink-secondary)' }}>
+              Daily Supplements
+            </span>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {unloggedDailyStack.length > 0 && (
+                <button
+                  type="button"
+                  className="btn btn-sm btn-accent"
+                  onClick={() => onLogDailyStack(unloggedDailyStack)}
+                >
+                  <Pill size={13} /> Log Daily Stack ({unloggedDailyStack.length})
+                </button>
+              )}
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={onOpenSupplementsModal}
+              >
+                + Add / Scan
+              </button>
+            </div>
+          </div>
+
+          {loggedSuppEntries.length > 0 ? (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+              {loggedSuppEntries.map((entry) => (
+                <span
+                  key={entry.id}
+                  className="chip"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: 'var(--code-high-bg)', color: 'var(--code-high)', borderColor: 'transparent' }}
+                >
+                  <CheckCircle2 size={12} /> {entry.title}
+                  <button
+                    type="button"
+                    onClick={() => onDeleteLog(entry.id)}
+                    aria-label={`Remove ${entry.title}`}
+                    style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, display: 'inline-flex', color: 'inherit' }}
+                  >
+                    <Trash2 size={11} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="muted-text" style={{ marginTop: 5, fontSize: '0.72rem' }}>
+              Saved stack: {dailyStack.length > 0 ? dailyStack.map((s) => s.name).join(' · ') : 'None yet — tap + Add / Scan'}.
+            </p>
+          )}
+        </div>
+
         <button
           type="button"
           className="btn btn-soft btn-sm"

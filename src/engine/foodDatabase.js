@@ -20,19 +20,19 @@ export const USDA_WHOLE_FOODS = [
   { id: 'usda-tortilla', name: 'Flour Tortilla / Wrap', category: 'Grains', defaultGrams: 65, defaultRole: 'carb', per100g: { carbs: 50.0, protein: 8.2, fat: 7.5, fiber: 3.0, iron: 3.3, calcium: 120, vitD: 0, magnesium: 24, sodium: 610 } },
 
   // Fruit & Sweeteners
-  { id: 'usda-blueberries', name: 'Blueberries (fresh / frozen)', category: 'Fruit', defaultGrams: 100, defaultRole: 'fixed', per100g: { carbs: 14.5, protein: 0.7, fat: 0.3, fiber: 2.4, iron: 0.3, calcium: 6, vitD: 0, magnesium: 6, sodium: 1 } },
-  { id: 'usda-strawberries', name: 'Strawberries', category: 'Fruit', defaultGrams: 120, defaultRole: 'fixed', per100g: { carbs: 7.7, protein: 0.7, fat: 0.3, fiber: 2.0, iron: 0.4, calcium: 16, vitD: 0, magnesium: 13, sodium: 1 } },
-  { id: 'usda-raspberries', name: 'Raspberries', category: 'Fruit', defaultGrams: 100, defaultRole: 'fixed', per100g: { carbs: 11.9, protein: 1.2, fat: 0.7, fiber: 6.5, iron: 0.7, calcium: 25, vitD: 0, magnesium: 22, sodium: 1 } },
-  { id: 'usda-mixed-berries', name: 'Mixed Berries', category: 'Fruit', defaultGrams: 100, defaultRole: 'fixed', per100g: { carbs: 11.5, protein: 0.9, fat: 0.4, fiber: 3.6, iron: 0.5, calcium: 18, vitD: 0, magnesium: 15, sodium: 1 } },
-  { id: 'usda-banana', name: 'Banana (medium ~118g)', category: 'Fruit', defaultGrams: 118, defaultRole: 'carb', per100g: { carbs: 22.8, protein: 1.1, fat: 0.3, fiber: 2.6, iron: 0.3, calcium: 5, vitD: 0, magnesium: 27, sodium: 1 } },
-  { id: 'usda-apple', name: 'Apple', category: 'Fruit', defaultGrams: 180, defaultRole: 'fixed', per100g: { carbs: 13.8, protein: 0.3, fat: 0.2, fiber: 2.4, iron: 0.1, calcium: 6, vitD: 0, magnesium: 5, sodium: 1 } },
-  { id: 'usda-orange', name: 'Orange', category: 'Fruit', defaultGrams: 150, defaultRole: 'fixed', per100g: { carbs: 11.8, protein: 0.9, fat: 0.1, fiber: 2.4, iron: 0.1, calcium: 40, vitD: 0, magnesium: 10, sodium: 0 } },
-  { id: 'usda-dates', name: 'Medjool Dates', category: 'Fruit', defaultGrams: 45, defaultRole: 'carb', per100g: { carbs: 75.0, protein: 1.8, fat: 0.2, fiber: 6.7, iron: 0.9, calcium: 64, vitD: 0, magnesium: 54, sodium: 1 } },
-  { id: 'usda-raisins', name: 'Raisins', category: 'Fruit', defaultGrams: 40, defaultRole: 'carb', per100g: { carbs: 79.2, protein: 3.1, fat: 0.5, fiber: 3.7, iron: 1.9, calcium: 50, vitD: 0, magnesium: 32, sodium: 11 } },
-  { id: 'usda-honey', name: 'Honey', category: 'Sweeteners', defaultGrams: 20, defaultRole: 'carb', per100g: { carbs: 82.4, protein: 0.3, fat: 0, fiber: 0.2, iron: 0.4, calcium: 6, vitD: 0, magnesium: 2, sodium: 4 } },
-  { id: 'usda-maple', name: 'Maple Syrup', category: 'Sweeteners', defaultGrams: 25, defaultRole: 'carb', per100g: { carbs: 67.0, protein: 0, fat: 0.1, fiber: 0, iron: 0.1, calcium: 102, vitD: 0, magnesium: 21, sodium: 12 } },
-  { id: 'usda-jam', name: 'Fruit Jam / Preserves', category: 'Sweeteners', defaultGrams: 25, defaultRole: 'carb', per100g: { carbs: 68.9, protein: 0.4, fat: 0.1, fiber: 1.1, iron: 0.5, calcium: 20, vitD: 0, magnesium: 4, sodium: 32 } },
-  { id: 'usda-oj', name: 'Orange Juice (100%)', category: 'Drinks', defaultGrams: 250, defaultRole: 'carb', per100g: { carbs: 10.4, protein: 0.7, fat: 0.2, fiber: 0.2, iron: 0.2, calcium: 11, vitD: 0, magnesium: 11, sodium: 1 } },
+  { id: 'usda-blueberries', name: 'Blueberries (fresh / frozen)', category: 'Fruit', defaultGrams: 100, defaultRole: 'fixed', per100g: { carbs: 14.5, protein: 0.7, fat: 0.3, fiber: 2.4, iron: 0.3, calcium: 6, vitD: 0, vitC: 9.7, magnesium: 6, sodium: 1 } },
+  { id: 'usda-strawberries', name: 'Strawberries', category: 'Fruit', defaultGrams: 120, defaultRole: 'fixed', per100g: { carbs: 7.7, protein: 0.7, fat: 0.3, fiber: 2.0, iron: 0.4, calcium: 16, vitD: 0, vitC: 58.8, magnesium: 13, sodium: 1 } },
+  { id: 'usda-raspberries', name: 'Raspberries', category: 'Fruit', defaultGrams: 100, defaultRole: 'fixed', per100g: { carbs: 11.9, protein: 1.2, fat: 0.7, fiber: 6.5, iron: 0.7, calcium: 25, vitD: 0, vitC: 26.2, magnesium: 22, sodium: 1 } },
+  { id: 'usda-mixed-berries', name: 'Mixed Berries', category: 'Fruit', defaultGrams: 100, defaultRole: 'fixed', per100g: { carbs: 11.5, protein: 0.9, fat: 0.4, fiber: 3.6, iron: 0.5, calcium: 18, vitD: 0, vitC: 30.0, magnesium: 15, sodium: 1 } },
+  { id: 'usda-banana', name: 'Banana (medium ~118g)', category: 'Fruit', defaultGrams: 118, defaultRole: 'carb', per100g: { carbs: 22.8, protein: 1.1, fat: 0.3, fiber: 2.6, iron: 0.3, calcium: 5, vitD: 0, vitC: 8.7, magnesium: 27, sodium: 1 } },
+  { id: 'usda-apple', name: 'Apple', category: 'Fruit', defaultGrams: 180, defaultRole: 'fixed', per100g: { carbs: 13.8, protein: 0.3, fat: 0.2, fiber: 2.4, iron: 0.1, calcium: 6, vitD: 0, vitC: 4.6, magnesium: 5, sodium: 1 } },
+  { id: 'usda-orange', name: 'Orange', category: 'Fruit', defaultGrams: 150, defaultRole: 'fixed', per100g: { carbs: 11.8, protein: 0.9, fat: 0.1, fiber: 2.4, iron: 0.1, calcium: 40, vitD: 0, vitC: 53.2, magnesium: 10, sodium: 0 } },
+  { id: 'usda-dates', name: 'Medjool Dates', category: 'Fruit', defaultGrams: 45, defaultRole: 'carb', per100g: { carbs: 75.0, protein: 1.8, fat: 0.2, fiber: 6.7, iron: 0.9, calcium: 64, vitD: 0, vitC: 0, magnesium: 54, sodium: 1 } },
+  { id: 'usda-raisins', name: 'Raisins', category: 'Fruit', defaultGrams: 40, defaultRole: 'carb', per100g: { carbs: 79.2, protein: 3.1, fat: 0.5, fiber: 3.7, iron: 1.9, calcium: 50, vitD: 0, vitC: 2.3, magnesium: 32, sodium: 11 } },
+  { id: 'usda-honey', name: 'Honey', category: 'Sweeteners', defaultGrams: 20, defaultRole: 'carb', per100g: { carbs: 82.4, protein: 0.3, fat: 0, fiber: 0.2, iron: 0.4, calcium: 6, vitD: 0, vitC: 0.5, magnesium: 2, sodium: 4 } },
+  { id: 'usda-maple', name: 'Maple Syrup', category: 'Sweeteners', defaultGrams: 25, defaultRole: 'carb', per100g: { carbs: 67.0, protein: 0, fat: 0.1, fiber: 0, iron: 0.1, calcium: 102, vitD: 0, vitC: 0, magnesium: 21, sodium: 12 } },
+  { id: 'usda-jam', name: 'Fruit Jam / Preserves', category: 'Sweeteners', defaultGrams: 25, defaultRole: 'carb', per100g: { carbs: 68.9, protein: 0.4, fat: 0.1, fiber: 1.1, iron: 0.5, calcium: 20, vitD: 0, vitC: 8.0, magnesium: 4, sodium: 32 } },
+  { id: 'usda-oj', name: 'Orange Juice (100%)', category: 'Drinks', defaultGrams: 250, defaultRole: 'carb', per100g: { carbs: 10.4, protein: 0.7, fat: 0.2, fiber: 0.2, iron: 0.2, calcium: 11, vitD: 0, vitC: 50.0, magnesium: 11, sodium: 1 } },
 
   // Dairy, Plant Milks & Protein
   { id: 'usda-greek-yogurt-0', name: 'Greek Yogurt (0% fat)', category: 'Dairy & Protein', defaultGrams: 200, defaultRole: 'protein', per100g: { carbs: 3.6, protein: 10.2, fat: 0.4, fiber: 0, iron: 0.1, calcium: 110, vitD: 0.4, magnesium: 11, sodium: 36 } },
@@ -68,20 +68,20 @@ export const USDA_WHOLE_FOODS = [
   { id: 'usda-walnuts', name: 'Walnuts', category: 'Fats & Nuts', defaultGrams: 25, defaultRole: 'fixed', per100g: { carbs: 13.7, protein: 15.2, fat: 65.2, fiber: 6.7, iron: 2.9, calcium: 98, vitD: 0, magnesium: 158, sodium: 2 } },
   { id: 'usda-chia', name: 'Chia Seeds', category: 'Fats & Nuts', defaultGrams: 12, defaultRole: 'fixed', per100g: { carbs: 42.1, protein: 16.5, fat: 30.7, fiber: 34.4, iron: 7.7, calcium: 631, vitD: 0, magnesium: 335, sodium: 16 } },
   { id: 'usda-flax', name: 'Ground Flaxseed', category: 'Fats & Nuts', defaultGrams: 12, defaultRole: 'fixed', per100g: { carbs: 28.9, protein: 18.3, fat: 42.2, fiber: 27.3, iron: 5.7, calcium: 255, vitD: 0, magnesium: 392, sodium: 30 } },
-  { id: 'usda-avocado', name: 'Avocado', category: 'Fats & Nuts', defaultGrams: 60, defaultRole: 'fixed', per100g: { carbs: 8.5, protein: 2.0, fat: 14.7, fiber: 6.7, iron: 0.6, calcium: 12, vitD: 0, magnesium: 29, sodium: 7 } },
+  { id: 'usda-avocado', name: 'Avocado', category: 'Fats & Nuts', defaultGrams: 60, defaultRole: 'fixed', per100g: { carbs: 8.5, protein: 2.0, fat: 14.7, fiber: 6.7, iron: 0.6, calcium: 12, vitD: 0, vitC: 10.0, magnesium: 29, sodium: 7 } },
   { id: 'usda-olive-oil', name: 'Extra Virgin Olive Oil', category: 'Fats & Nuts', defaultGrams: 10, defaultRole: 'fixed', per100g: { carbs: 0, protein: 0, fat: 100.0, fiber: 0, iron: 0.6, calcium: 1, vitD: 0, magnesium: 0, sodium: 2 } },
   { id: 'usda-butter', name: 'Butter', category: 'Fats & Nuts', defaultGrams: 10, defaultRole: 'fixed', per100g: { carbs: 0.1, protein: 0.9, fat: 81.1, fiber: 0, iron: 0, calcium: 24, vitD: 0, magnesium: 2, sodium: 11 } },
 
   // Vegetables & Sauces
-  { id: 'usda-broccoli', name: 'Broccoli', category: 'Vegetables', defaultGrams: 120, defaultRole: 'fixed', per100g: { carbs: 6.6, protein: 2.8, fat: 0.4, fiber: 2.6, iron: 0.7, calcium: 47, vitD: 0, magnesium: 21, sodium: 33 } },
-  { id: 'usda-spinach', name: 'Spinach', category: 'Vegetables', defaultGrams: 60, defaultRole: 'fixed', per100g: { carbs: 3.6, protein: 2.9, fat: 0.4, fiber: 2.2, iron: 2.7, calcium: 99, vitD: 0, magnesium: 79, sodium: 79 } },
-  { id: 'usda-asparagus', name: 'Asparagus', category: 'Vegetables', defaultGrams: 120, defaultRole: 'fixed', per100g: { carbs: 3.9, protein: 2.2, fat: 0.1, fiber: 2.1, iron: 2.1, calcium: 24, vitD: 0, magnesium: 14, sodium: 2 } },
-  { id: 'usda-mixed-veg', name: 'Mixed Roasted / Steamed Vegetables', category: 'Vegetables', defaultGrams: 150, defaultRole: 'fixed', per100g: { carbs: 7.5, protein: 2.2, fat: 0.4, fiber: 3.0, iron: 0.9, calcium: 38, vitD: 0, magnesium: 22, sodium: 30 } },
-  { id: 'usda-tomato-sauce', name: 'Tomato Pasta Sauce', category: 'Sauces', defaultGrams: 140, defaultRole: 'fixed', per100g: { carbs: 7.2, protein: 1.6, fat: 1.5, fiber: 1.8, iron: 0.8, calcium: 18, vitD: 0, magnesium: 16, sodium: 320 } },
+  { id: 'usda-broccoli', name: 'Broccoli', category: 'Vegetables', defaultGrams: 120, defaultRole: 'fixed', per100g: { carbs: 6.6, protein: 2.8, fat: 0.4, fiber: 2.6, iron: 0.7, calcium: 47, vitD: 0, vitC: 89.2, magnesium: 21, sodium: 33 } },
+  { id: 'usda-spinach', name: 'Spinach', category: 'Vegetables', defaultGrams: 60, defaultRole: 'fixed', per100g: { carbs: 3.6, protein: 2.9, fat: 0.4, fiber: 2.2, iron: 2.7, calcium: 99, vitD: 0, vitC: 28.1, magnesium: 79, sodium: 79 } },
+  { id: 'usda-asparagus', name: 'Asparagus', category: 'Vegetables', defaultGrams: 120, defaultRole: 'fixed', per100g: { carbs: 3.9, protein: 2.2, fat: 0.1, fiber: 2.1, iron: 2.1, calcium: 24, vitD: 0, vitC: 5.6, magnesium: 14, sodium: 2 } },
+  { id: 'usda-mixed-veg', name: 'Mixed Roasted / Steamed Vegetables', category: 'Vegetables', defaultGrams: 150, defaultRole: 'fixed', per100g: { carbs: 7.5, protein: 2.2, fat: 0.4, fiber: 3.0, iron: 0.9, calcium: 38, vitD: 0, vitC: 25.0, magnesium: 22, sodium: 30 } },
+  { id: 'usda-tomato-sauce', name: 'Tomato Pasta Sauce', category: 'Sauces', defaultGrams: 140, defaultRole: 'fixed', per100g: { carbs: 7.2, protein: 1.6, fat: 1.5, fiber: 1.8, iron: 0.8, calcium: 18, vitD: 0, vitC: 7.0, magnesium: 16, sodium: 320 } },
 
   // Cycling Fuel
-  { id: 'usda-carb-mix', name: 'Carb Drink Mix (powder)', category: 'Bike Fuel', defaultGrams: 60, defaultRole: 'carb', per100g: { carbs: 95.0, protein: 0, fat: 0, fiber: 0, iron: 0, calcium: 0, vitD: 0, magnesium: 40, sodium: 800 } },
-  { id: 'usda-gel', name: 'Energy Gel (1 packet ≈ 40g)', category: 'Bike Fuel', defaultGrams: 40, defaultRole: 'carb', per100g: { carbs: 65.0, protein: 0, fat: 0, fiber: 0, iron: 0, calcium: 0, vitD: 0, magnesium: 20, sodium: 150 } },
+  { id: 'usda-carb-mix', name: 'Carb Drink Mix (powder)', category: 'Bike Fuel', defaultGrams: 60, defaultRole: 'carb', per100g: { carbs: 95.0, protein: 0, fat: 0, fiber: 0, iron: 0, calcium: 0, vitD: 0, vitC: 0, magnesium: 40, sodium: 800 } },
+  { id: 'usda-gel', name: 'Energy Gel (1 packet ≈ 40g)', category: 'Bike Fuel', defaultGrams: 40, defaultRole: 'carb', per100g: { carbs: 65.0, protein: 0, fat: 0, fiber: 0, iron: 0, calcium: 0, vitD: 0, vitC: 0, magnesium: 20, sodium: 150 } },
 ];
 
 export function searchLocalWholeFoods(query) {
@@ -94,14 +94,14 @@ export function searchLocalWholeFoods(query) {
   }).slice(0, 12);
 }
 
-function normalizeOpenFoodFactsProduct(p) {
-  if (!p || !p.nutriments) return null;
-  const n = p.nutriments;
+function normalizeOpenFoodFactsProduct(p, allowZeroMacro = false) {
+  if (!p) return null;
+  const n = p.nutriments || {};
   const carbs = Number(n.carbohydrates_100g ?? 0);
   const protein = Number(n.proteins_100g ?? 0);
   const fat = Number(n.fat_100g ?? 0);
   if ([carbs, protein, fat].some((v) => Number.isNaN(v))) return null;
-  if (carbs === 0 && protein === 0 && fat === 0) return null;
+  if (!allowZeroMacro && carbs === 0 && protein === 0 && fat === 0) return null;
 
   const brand = p.brands ? String(p.brands).split(',')[0].trim() : '';
   const baseName = String(p.product_name || p.product_name_en || '').trim();
@@ -134,13 +134,22 @@ function normalizeOpenFoodFactsProduct(p) {
       iron: Number(((Number(n.iron_100g) || 0) * 1000).toFixed(1)),
       calcium: Math.round((Number(n.calcium_100g) || 0) * 1000),
       vitD: Number(((Number(n['vitamin-d_100g']) || 0) * 1000000).toFixed(1)),
+      vitC: Math.round((Number(n['vitamin-c_100g']) || 0) * 1000),
       magnesium: Math.round((Number(n.magnesium_100g) || 0) * 1000),
       sodium: Math.round((Number(n.sodium_100g) || (Number(n.salt_100g) || 0) / 2.5) * 1000),
+    },
+    perServingMicros: {
+      iron: Number(((Number(n.iron_serving) || 0) * 1000).toFixed(1)),
+      calcium: Math.round((Number(n.calcium_serving) || 0) * 1000),
+      vitD: Number(((Number(n['vitamin-d_serving']) || 0) * 1000000).toFixed(1)),
+      vitC: Math.round((Number(n['vitamin-c_serving']) || 0) * 1000),
+      magnesium: Math.round((Number(n.magnesium_serving) || 0) * 1000),
+      sodium: Math.round((Number(n.sodium_serving) || 0) * 1000),
     },
   };
 }
 
-export async function lookupBarcode(barcode) {
+export async function lookupBarcode(barcode, { allowZeroMacro = false } = {}) {
   const clean = String(barcode || '').replace(/[^\d]/g, '');
   if (clean.length < 6) {
     throw new Error('Enter a valid barcode (at least 6 digits).');
@@ -151,11 +160,11 @@ export async function lookupBarcode(barcode) {
   if (!resp.ok) throw new Error(`Product lookup failed (HTTP ${resp.status}).`);
   const data = await resp.json();
   if (data.status !== 1 || !data.product) {
-    throw new Error(`Barcode ${clean} wasn't found in Open Food Facts. You can add it as a Custom Food below.`);
+    throw new Error(`Barcode ${clean} wasn't found in Open Food Facts. You can add it manually below.`);
   }
-  const normalized = normalizeOpenFoodFactsProduct(data.product);
+  const normalized = normalizeOpenFoodFactsProduct(data.product, allowZeroMacro);
   if (!normalized) {
-    throw new Error(`Found "${data.product.product_name || clean}" but nutrition per 100g is incomplete. Add it via Custom Food.`);
+    throw new Error(`Found "${data.product.product_name || clean}" but nutrition per 100g is incomplete. Add it manually.`);
   }
   return normalized;
 }

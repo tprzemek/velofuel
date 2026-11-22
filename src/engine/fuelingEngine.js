@@ -1,15 +1,6 @@
-// Pro Cycling Fueling Engine
-// Combines:
-// - Dr. Sam Impey & Prof. James Morton: Fuel For The Work Required (FFTWR / Hexis)
-// - Dr. Tim Podlogar (Empirical Cycling Perspectives #41 / Tudor Pro Cycling):
-//   * Non-exercise-hours RMR (avoids double-counting RMR during ride hours!)
-//   * Individual cycling Gross Efficiency % (18-24%) for kJ -> metabolic kcal
-//   * Expenditure-matched progressive on-bike fueling (avoiding over-fueling easy rides)
-//   * Liver vs. muscle glycogen timing (fructose/galactose pre-ride, between-sessions post-ride)
-//   * Macros calibrated to BOTH g/kg bodyweight AND % total energy
-//   * 24-hour glycogen supercompensation (10-12 g/kg, low fat/fiber)
-// - FoodCoach modular Home Staple Auto-Scaling
+import { formatLiquid, formatSodiumPractical, getUnits } from './units';
 
+// Pro Cycling Fueling Engine
 const INTENSITY_META = {
   rest: { label: 'Rest Day', ifEst: 0, carbFractionBurn: 0 },
   recovery: { label: 'Recovery Spin', ifEst: 0.52, carbFractionBurn: 0.3 },
@@ -34,6 +25,8 @@ export const FUEL_CATEGORY_META = {
   VERY_HIGH: { label: 'Max Glycogen', badge: 'MAX', color: 'max', gPerKgRange: '8.5–11 g/kg' },
 };
 
+export const BOTTLE_SIZE_OPTIONS = [500, 550, 650, 750, 950];
+
 export function estimateSessionKj(session, ftp = 290) {
   if (!session || session.intensity === 'rest' || !session.durationMin) return 0;
   if (session.status === 'completed' && session.actualKj > 0) return Math.round(session.actualKj);
@@ -43,8 +36,8 @@ export function estimateSessionKj(session, ftp = 290) {
   return Math.round((avgWatts * session.durationMin * 60) / 1000);
 }
 
-// Tim Podlogar: Cycling Gross Efficiency varies 18–24%.
-// Metabolic kcal = Mechanical kJ / (4.184 * GE). At 23.9% GE => 1 kJ = 1.00 kcal; at 22% GE => 1.09 kcal.
+// Cycling Efficiency varies 18–24%.
+// Metabolic kcal = Mechanical kJ / (4.184 * GE). At 23.9% => 1 kJ = 1.00 kcal; at 22% => 1.09 kcal.
 export function kjToMetabolicKcal(kj, grossEfficiencyPct = 22.0) {
   if (!kj || kj <= 0) return 0;
   const clampedGe = Math.min(26, Math.max(17, Number(grossEfficiencyPct) || 22)) / 100;
@@ -61,17 +54,19 @@ export function classifySessionCategory(session, exerciseKcal) {
   return 'LOW';
 }
 
-// Podlogar expenditure-matched & progressive on-bike fueling:
-// Scales with actual kcal/hr burn so lower-wattage rides aren't over-fueled (which suppresses fat oxidation & adds surplus)
-export function computeOnBikePlan(session, category, exerciseKcal) {
+// Expenditure-matched & progressive on-bike fueling with custom bottle sizes and practical salt/tablet recipes
+export function computeOnBikePlan(session, category, exerciseKcal, options = {}) {
   if (!session || !session.durationMin || session.intensity === 'rest') {
     return null;
   }
   const hrs = session.durationMin / 60;
   const kcalPerHr = exerciseKcal / Math.max(hrs, 0.25);
   const meta = INTENSITY_META[session.intensity] || INTENSITY_META.endurance;
+  const bottleSizeMl = Math.max(300, Number(session.bottleSizeMl || options.defaultBottleMl) || 650);
+  const tabletMg = Math.max(100, Number(options.electrolyteTabMg) || 500);
+  const units = options.units || getUnits();
 
-  // Estimate endogenous + exogenous carb burn per hour (g/hr)
+  // Estimate carbohydrate burn per hour (g/hr)
   const carbBurnGPerHr = (kcalPerHr * meta.carbFractionBurn) / 4;
 
   let carbsPerHour = 0;
@@ -84,13 +79,11 @@ export function computeOnBikePlan(session, category, exerciseKcal) {
       ? Math.round(Math.min(55, Math.max(30, carbBurnGPerHr * 0.35)) / 5) * 5
       : Math.round(Math.min(35, Math.max(20, carbBurnGPerHr * 0.28)) / 5) * 5;
   } else {
-    // Target ~40–55% of hourly carbohydrate burn, capped by practical gut absorption (30–95 g/h)
     const replaceFraction = category === 'VERY_HIGH' ? 0.56 : category === 'HIGH' ? 0.5 : 0.44;
     const rawRate = carbBurnGPerHr * replaceFraction;
     const cap = category === 'VERY_HIGH' ? 95 : category === 'HIGH' ? 85 : 65;
     carbsPerHour = Math.round(Math.min(cap, Math.max(30, rawRate)) / 5) * 5;
 
-    // Podlogar progressive fueling for long rides (>= 2.5h): start moderate Hr 1 to preserve fat oxidation, ramp Hr 2-3
     if (session.durationMin >= 150 && carbsPerHour >= 60) {
       const hr1 = Math.max(45, Math.round((carbsPerHour * 0.78) / 5) * 5);
       const hr2Plus = Math.min(100, Math.round((carbsPerHour * 1.1) / 5) * 5);
@@ -100,16 +93,22 @@ export function computeOnBikePlan(session, category, exerciseKcal) {
 
   const totalCarbs = Math.round(carbsPerHour * hrs);
   const fluidMlPerHr = category === 'HIGH' || category === 'VERY_HIGH' ? 700 : 550;
+  const totalFluidMl = Math.round(fluidMlPerHr * hrs);
   const sodiumMgPerHr = category === 'HIGH' || category === 'VERY_HIGH' ? 650 : 450;
-  const bottles = Math.max(1, Math.ceil((fluidMlPerHr * hrs) / 650));
+  const totalSodiumMg = Math.round(sodiumMgPerHr * hrs);
+  const bottles = Math.max(1, Math.ceil(totalFluidMl / bottleSizeMl));
+  const carbsPerBottle = Math.round(totalCarbs / bottles);
+  const sodiumPerBottleMg = Math.round(totalSodiumMg / bottles);
+  const bottleLabel = formatLiquid(bottleSizeMl, units);
+  const bottleSaltText = formatSodiumPractical(sodiumPerBottleMg, tabletMg);
 
-  let note = 'Short easy spin — water + electrolytes only. Save carbs for meals.';
+  let note = `Short easy spin — ${bottles}× ${bottleLabel} water + ${bottleSaltText} per bottle. Save carbs for meals.`;
   if (carbsPerHour > 60) {
-    note = `${bottles} bottles (dual-carb drink mix + gels) for ~${Math.round(kcalPerHr)} kcal/h burn. ${
-      progressiveRamp ? `Gradual ramp: ${progressiveRamp}.` : 'Steady sips every 15 min.'
+    note = `${bottles}× ${bottleLabel} bottles (~${carbsPerBottle}g carbs + ${bottleSaltText} per bottle, or split with gels). ${
+      progressiveRamp ? `Gradual ramp: ${progressiveRamp}.` : 'Sip steadily every 15 min.'
     }`;
   } else if (carbsPerHour > 0) {
-    note = `${bottles} bottle${bottles > 1 ? 's' : ''} matched to ~${Math.round(kcalPerHr)} kcal/h burn — prevents deep fatigue & post-ride cravings without over-eating.`;
+    note = `${bottles}× ${bottleLabel} bottle${bottles > 1 ? 's' : ''} (~${carbsPerBottle}g carbs + ${bottleSaltText} per bottle) matched to ~${Math.round(kcalPerHr)} kcal/h burn.`;
   }
 
   return {
@@ -119,8 +118,14 @@ export function computeOnBikePlan(session, category, exerciseKcal) {
     kcalPerHr: Math.round(kcalPerHr),
     progressiveRamp,
     fluidMlPerHr,
+    totalFluidMl,
+    bottleSizeMl,
+    bottleLabel,
+    carbsPerBottle,
     sodiumMgPerHr,
-    totalSodiumMg: Math.round(sodiumMgPerHr * hrs),
+    totalSodiumMg,
+    sodiumPerBottleMg,
+    bottleSaltText,
     bottles,
     note,
   };
@@ -278,7 +283,11 @@ export function computeDailyPlan({
 
   targetKcal = carbsG * 4 + proteinG * 4 + fatG * 9;
   const energyAvailability = Number(((targetKcal - exerciseKcal) / Math.max(leanMassKg, 40)).toFixed(1));
-  const onBikePlan = computeOnBikePlan(todaySession, category, exerciseKcal);
+  const onBikePlan = computeOnBikePlan(todaySession, category, exerciseKcal, {
+    defaultBottleMl: profile.defaultBottleMl || 650,
+    electrolyteTabMg: profile.electrolyteTabMg || 500,
+    units: getUnits(profile),
+  });
 
   // Plain-English Nutrient Timing Tips
   const leadHrs = Number(profile.preRideLeadHours || 2);
@@ -310,6 +319,7 @@ export function computeDailyPlan({
   const microTargets = {
     fiber: category === 'VERY_HIGH' || profile.goalMode === 'carb_load' ? 20 : 34,
     iron: profile.sex === 'female' ? 18 : 11,
+    vitC: profile.sex === 'female' ? 75 : 90,
     calcium: 1100,
     vitD: 15,
     magnesium: profile.sex === 'female' ? 350 : 420,
@@ -389,7 +399,7 @@ function buildMealTimeline({ category, todaySession, needsTomorrowPreload, carbs
       slot: 'breakfast',
       label: hasRide && timing === 'morning' ? 'Pre-Ride Breakfast' : 'Breakfast',
       location: 'Home',
-      timeHint: hasRide && timing === 'morning' ? 'Liver glycogen · Low fiber' : '07:30',
+      timeHint: hasRide && timing === 'morning' ? 'Light & quick energy · Low fiber' : '07:30',
       targetCarbs: Math.round(offBikeCarbs * cWeights.breakfast),
       targetProtein: Math.round(proteinG * pWeights.breakfast),
       targetFat: Math.round(fatG * fWeights.breakfast),
@@ -506,7 +516,7 @@ export function computeStapleNutrition(staple, gramsById = {}) {
   let carbs = 0;
   let protein = 0;
   let fat = 0;
-  const micros = { fiber: 0, iron: 0, calcium: 0, vitD: 0, magnesium: 0, sodium: 0 };
+  const micros = { fiber: 0, iron: 0, vitC: 0, calcium: 0, vitD: 0, magnesium: 0, sodium: 0 };
   const resolvedItems = [];
 
   for (const ing of ingredients) {
@@ -518,6 +528,7 @@ export function computeStapleNutrition(staple, gramsById = {}) {
     fat += (p.fat || 0) * f;
     micros.fiber += (p.fiber || 0) * f;
     micros.iron += (p.iron || 0) * f;
+    micros.vitC += (p.vitC || 0) * f;
     micros.calcium += (p.calcium || 0) * f;
     micros.vitD += (p.vitD || 0) * f;
     micros.magnesium += (p.magnesium || 0) * f;
@@ -542,6 +553,7 @@ export function computeStapleNutrition(staple, gramsById = {}) {
     micros: {
       fiber: Number(micros.fiber.toFixed(1)),
       iron: Number(micros.iron.toFixed(1)),
+      vitC: Math.round(micros.vitC),
       calcium: Math.round(micros.calcium),
       vitD: Number(micros.vitD.toFixed(1)),
       magnesium: Math.round(micros.magnesium),
@@ -568,6 +580,7 @@ export function sumDailyLogs(logs = []) {
         micros: {
           fiber: Number((acc.micros.fiber + (entry.micros?.fiber || 0)).toFixed(1)),
           iron: Number((acc.micros.iron + (entry.micros?.iron || 0)).toFixed(1)),
+          vitC: Math.round(acc.micros.vitC + (entry.micros?.vitC || 0)),
           calcium: Math.round(acc.micros.calcium + (entry.micros?.calcium || 0)),
           vitD: Number((acc.micros.vitD + (entry.micros?.vitD || 0)).toFixed(1)),
           magnesium: Math.round(acc.micros.magnesium + (entry.micros?.magnesium || 0)),
@@ -583,7 +596,7 @@ export function sumDailyLogs(logs = []) {
       kcalUncertainty: 0,
       carbUncertainty: 0,
       hasEstimates: false,
-      micros: { fiber: 0, iron: 0, calcium: 0, vitD: 0, magnesium: 0, sodium: 0 },
+      micros: { fiber: 0, iron: 0, vitC: 0, calcium: 0, vitD: 0, magnesium: 0, sodium: 0 },
     }
   );
 }

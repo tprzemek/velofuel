@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Plus, Scale, Trash2, Check, Pencil, X } from 'lucide-react';
+import { Plus, Scale, Trash2, Check, Pencil, X, Pin } from 'lucide-react';
 import { computeStapleNutrition, scaleStapleToTargets } from '../engine/fuelingEngine';
+import { foodDisplayToGrams, foodUnitLabel, formatFoodAmount, gramsToFoodDisplay } from '../engine/units';
 import FoodPickerPanel from './FoodPickerPanel';
 import NumericInput from './NumericInput';
 
@@ -17,14 +18,16 @@ const PORTION_MODES = [
   { value: 'protein', label: 'Auto-adjust for muscle (Protein)' },
 ];
 
-export default function StaplesView({ staples, onSaveStaple, onDeleteStaple }) {
+export default function StaplesView({ staples, units, onSaveStaple, onDeleteStaple }) {
   const [editor, setEditor] = useState(null);
+  const foodUnit = foodUnitLabel(units);
 
   const openNew = () => {
     setEditor({
       id: `staple-${Date.now()}`,
       name: '',
       mealTypes: ['breakfast'],
+      dailySlot: '',
       prepNote: '',
       ingredients: [],
     });
@@ -35,6 +38,7 @@ export default function StaplesView({ staples, onSaveStaple, onDeleteStaple }) {
       id: staple.id,
       name: staple.name,
       mealTypes: Array.isArray(staple.mealTypes) && staple.mealTypes.length ? [...staple.mealTypes] : ['dinner'],
+      dailySlot: staple.dailySlot || '',
       prepNote: staple.prepNote || '',
       ingredients: (staple.ingredients || []).map((i) => ({ ...i })),
     });
@@ -81,10 +85,16 @@ export default function StaplesView({ staples, onSaveStaple, onDeleteStaple }) {
         maxGrams: Math.max(g + 80, Math.round((g * 2.2) / 5) * 5),
       };
     });
+    const finalMealTypes =
+      editor.dailySlot && !editor.mealTypes.includes(editor.dailySlot)
+        ? [...editor.mealTypes, editor.dailySlot]
+        : editor.mealTypes;
+
     onSaveStaple({
       id: editor.id,
       name: editor.name.trim(),
-      mealTypes: editor.mealTypes,
+      mealTypes: finalMealTypes,
+      dailySlot: editor.dailySlot || null,
       prepNote: editor.prepNote.trim() || `${sanitized.length} ingredients — adjusts automatically to your rides.`,
       ingredients: sanitized,
     });
@@ -98,10 +108,10 @@ export default function StaplesView({ staples, onSaveStaple, onDeleteStaple }) {
       <section className="card">
         <div className="section-header">
           <div>
-            <h1 className="section-title" style={{ fontSize: '1.08rem' }}>Your Home Staple Menu</h1>
+            <h1 className="section-title" style={{ fontSize: '1.08rem' }}>Your Saved Meals</h1>
             <p className="muted-text" style={{ marginTop: 3 }}>
-              Build the exact meals you eat at home — whether it&apos;s just Oats &amp; Berries or a full dinner. Search
-              foods, <strong>scan barcodes</strong>, or write custom items freely.
+              Save the meals you eat regularly — scan barcodes to build them fast, and <strong>pin your everyday meals</strong>{' '}
+              (like breakfast) for 1-tap logging on Today.
             </p>
           </div>
         </div>
@@ -112,7 +122,7 @@ export default function StaplesView({ staples, onSaveStaple, onDeleteStaple }) {
             </>
           ) : (
             <>
-              <Plus size={16} /> Create New Home Meal
+              <Plus size={16} /> Create New Saved Meal
             </>
           )}
         </button>
@@ -124,7 +134,7 @@ export default function StaplesView({ staples, onSaveStaple, onDeleteStaple }) {
           <form onSubmit={handleSave}>
             <div className="section-header">
               <h2 className="section-title">
-                {staples.some((s) => s.id === editor.id) ? 'Edit Home Meal' : 'New Home Meal'}
+                {staples.some((s) => s.id === editor.id) ? 'Edit Saved Meal' : 'New Saved Meal'}
               </h2>
               <button type="button" className="icon-btn" onClick={() => setEditor(null)} aria-label="Close editor">
                 <X size={16} />
@@ -143,29 +153,47 @@ export default function StaplesView({ staples, onSaveStaple, onDeleteStaple }) {
               />
             </div>
 
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--ink-secondary)', marginBottom: 6 }}>
-                Usually eaten for
+            <div className="field-grid" style={{ marginBottom: 12 }}>
+              <div className="field full">
+                <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--ink-secondary)' }}>
+                  Usually eaten for
+                </span>
+                <div className="chip-row" style={{ marginTop: 4 }}>
+                  {MEAL_SLOTS.map((s) => {
+                    const active = editor.mealTypes.includes(s.id);
+                    return (
+                      <button
+                        key={s.id}
+                        type="button"
+                        className="chip"
+                        style={
+                          active
+                            ? { background: 'var(--bg-carbon)', color: '#fff', borderColor: 'var(--bg-carbon)' }
+                            : undefined
+                        }
+                        onClick={() => toggleSlot(s.id)}
+                      >
+                        {s.label}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-              <div className="chip-row">
-                {MEAL_SLOTS.map((s) => {
-                  const active = editor.mealTypes.includes(s.id);
-                  return (
-                    <button
-                      key={s.id}
-                      type="button"
-                      className="chip"
-                      style={
-                        active
-                          ? { background: 'var(--bg-carbon)', color: '#fff', borderColor: 'var(--bg-carbon)' }
-                          : undefined
-                      }
-                      onClick={() => toggleSlot(s.id)}
-                    >
-                      {s.label}
-                    </button>
-                  );
-                })}
+
+              <div className="field full">
+                <label htmlFor="ed-daily-slot">Pin for 1-Tap Daily Logging (optional)</label>
+                <select
+                  id="ed-daily-slot"
+                  className="select"
+                  value={editor.dailySlot || ''}
+                  onChange={(e) => setEditor({ ...editor, dailySlot: e.target.value })}
+                >
+                  <option value="">Not pinned (pick manually)</option>
+                  <option value="breakfast">My Usual Daily Breakfast</option>
+                  <option value="lunch">My Usual Daily Lunch</option>
+                  <option value="snack">My Usual Daily Snack</option>
+                  <option value="dinner">My Usual Daily Dinner</option>
+                </select>
               </div>
             </div>
 
@@ -183,13 +211,13 @@ export default function StaplesView({ staples, onSaveStaple, onDeleteStaple }) {
               </div>
 
               <p className="muted-text" style={{ fontSize: '0.73rem', marginBottom: 8 }}>
-                Enter your normal portion in grams. Set your main carb (like oats or rice) to{' '}
+                Enter your normal portion in {foodUnit}. Set your main carb (like oats or rice) to{' '}
                 <strong>Auto-adjust for ride</strong> so VeloFuel gives you more on hard ride days and less on rest days.
               </p>
 
               {editor.ingredients.length === 0 ? (
                 <div className="notice-strip slate" style={{ fontSize: '0.76rem' }}>
-                  No ingredients yet — search below, scan a barcode, or write a custom food to add what you eat.
+                  No ingredients yet — scan a barcode below, search foods, or write a custom item.
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -230,19 +258,21 @@ export default function StaplesView({ staples, onSaveStaple, onDeleteStaple }) {
                             aria-label={`${ing.name} grams`}
                             className="input mono"
                             style={{ width: 74, padding: '6px 8px', fontSize: '0.82rem', background: 'var(--bg-surface)' }}
-                            value={ing.grams}
-                            min={1}
-                            max={1500}
-                            fallback={50}
-                            onChange={(val) =>
+                            value={gramsToFoodDisplay(ing.grams, units)}
+                            min={foodUnit === 'g' ? 1 : 0.1}
+                            max={foodUnit === 'g' ? 1500 : 100}
+                            step={foodUnit === 'g' ? 1 : 0.1}
+                            fallback={foodUnit === 'g' ? 50 : 2}
+                            onChange={(val) => {
+                              const canonicalG = Math.max(1, foodDisplayToGrams(val, units));
                               updateIngredient(ing.id, {
-                                grams: val,
-                                minGrams: Math.max(5, Math.round((val * 0.4) / 5) * 5),
-                                maxGrams: Math.max(val + 80, Math.round((val * 2.2) / 5) * 5),
-                              })
-                            }
+                                grams: canonicalG,
+                                minGrams: Math.max(5, Math.round((canonicalG * 0.4) / 5) * 5),
+                                maxGrams: Math.max(canonicalG + 80, Math.round((canonicalG * 2.2) / 5) * 5),
+                              });
+                            }}
                           />
-                          <span style={{ fontSize: '0.74rem', color: 'var(--ink-muted)', fontWeight: 600 }}>g</span>
+                          <span style={{ fontSize: '0.74rem', color: 'var(--ink-muted)', fontWeight: 600 }}>{foodUnit}</span>
                         </div>
 
                         <select
@@ -269,9 +299,9 @@ export default function StaplesView({ staples, onSaveStaple, onDeleteStaple }) {
 
             <div style={{ marginBottom: 14 }}>
               <div style={{ fontSize: '0.76rem', fontWeight: 800, marginBottom: 8 }}>
-                Add Ingredient (Search · Scan Barcode · Custom)
+                Add Ingredient (Scan Barcode · Search · Custom)
               </div>
-              <FoodPickerPanel onAddIngredient={addIngredient} buttonLabel="Add" />
+              <FoodPickerPanel onAddIngredient={addIngredient} buttonLabel="Add" units={units} />
             </div>
 
             <button
@@ -297,9 +327,16 @@ export default function StaplesView({ staples, onSaveStaple, onDeleteStaple }) {
           <article className="card" key={staple.id}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
               <div style={{ minWidth: 0 }}>
-                <h2 className="session-title">{staple.name}</h2>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  <h2 className="session-title">{staple.name}</h2>
+                  {staple.dailySlot && (
+                    <span className="carb-badge high" style={{ fontSize: '0.62rem' }}>
+                      <Pin size={10} /> Daily {staple.dailySlot}
+                    </span>
+                  )}
+                </div>
                 <div className="muted-text" style={{ marginTop: 3, fontSize: '0.75rem' }}>
-                  {(staple.ingredients || []).map((i) => `${i.grams}g ${i.name}`).join(' · ')}
+                  {(staple.ingredients || []).map((i) => `${formatFoodAmount(i.grams, units)} ${i.name}`).join(' · ')}
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
@@ -351,7 +388,7 @@ export default function StaplesView({ staples, onSaveStaple, onDeleteStaple }) {
                       {lbl}
                     </span>
                     <div className="mono" style={{ fontWeight: 800, fontSize: '0.84rem' }}>
-                      {carbVal != null ? `${carbVal}g` : `${sc.kcal} kcal`}
+                      {carbVal != null ? formatFoodAmount(carbVal, units) : `${sc.kcal} kcal`}
                     </div>
                     <div style={{ color: 'var(--ink-muted)', fontSize: '0.67rem' }}>
                       {primaryCarb ? primaryCarb.name.split(' ')[0] : 'total'}

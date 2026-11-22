@@ -103,6 +103,9 @@ export function computeBiometricsSummary(entries = [], profile) {
 
   const latestRhr = [...series].reverse().find((s) => s.restingHr != null)?.restingHr ?? null;
   const latestHrv = [...series].reverse().find((s) => s.hrv != null)?.hrv ?? null;
+  const latestMuscleMassKg = [...series].reverse().find((s) => s.muscleMassKg != null)?.muscleMassKg ?? null;
+  const latestHydrationKg = [...series].reverse().find((s) => s.hydrationKg != null)?.hydrationKg ?? null;
+  const latestBoneMassKg = [...series].reverse().find((s) => s.boneMassKg != null)?.boneMassKg ?? null;
 
   return {
     series,
@@ -117,6 +120,9 @@ export function computeBiometricsSummary(entries = [], profile) {
     tdeeSuggestion,
     latestRestingHr: latestRhr,
     latestHrv: latestHrv,
+    latestMuscleMassKg,
+    latestHydrationKg,
+    latestBoneMassKg,
   };
 }
 
@@ -134,7 +140,15 @@ export function parseWithingsCsv(csvText) {
   const weightIdx = header.findIndex((h) => h.includes('weight'));
   const fatMassIdx = header.findIndex((h) => h.includes('fat mass') || h.includes('fat (kg)'));
   const fatPctIdx = header.findIndex((h) => h.includes('fat (%)') || h.includes('fat ratio') || h.includes('body fat'));
+  const muscleIdx = header.findIndex((h) => h.includes('muscle'));
+  const hydrationIdx = header.findIndex((h) => h.includes('hydration'));
+  const boneIdx = header.findIndex((h) => h.includes('bone'));
   const isLbs = weightIdx >= 0 && header[weightIdx].includes('lb');
+  const toKg = (raw) => {
+    const n = parseFloat(raw);
+    if (Number.isNaN(n) || n <= 0) return null;
+    return Number((isLbs ? n * 0.45359237 : n).toFixed(2));
+  };
 
   if (dateIdx < 0 || weightIdx < 0) return [];
 
@@ -142,22 +156,20 @@ export function parseWithingsCsv(csvText) {
   for (let i = 1; i < lines.length; i += 1) {
     const cols = lines[i].split(',').map((c) => c.replace(/^"|"$/g, '').trim());
     const rawDate = cols[dateIdx];
-    const rawW = parseFloat(cols[weightIdx]);
-    if (!rawDate || Number.isNaN(rawW) || rawW <= 0) continue;
+    const weightKg = toKg(cols[weightIdx]);
+    if (!rawDate || !weightKg) continue;
 
     const dateMatch = rawDate.match(/\d{4}-\d{2}-\d{2}/);
     const isoDate = dateMatch ? dateMatch[0] : new Date(rawDate).toISOString().slice(0, 10);
     if (!isoDate || isoDate === 'Invalid Da') continue;
 
-    const weightKg = Number((isLbs ? rawW * 0.45359237 : rawW).toFixed(2));
     let bodyFatPct = null;
     if (fatPctIdx >= 0 && cols[fatPctIdx]) {
       const parsed = parseFloat(cols[fatPctIdx]);
       if (!Number.isNaN(parsed) && parsed > 3 && parsed < 60) bodyFatPct = Number(parsed.toFixed(1));
     } else if (fatMassIdx >= 0 && cols[fatMassIdx]) {
-      const rawFat = parseFloat(cols[fatMassIdx]);
-      if (!Number.isNaN(rawFat) && rawFat > 0) {
-        const fatKg = isLbs ? rawFat * 0.45359237 : rawFat;
+      const fatKg = toKg(cols[fatMassIdx]);
+      if (fatKg) {
         const pct = (fatKg / weightKg) * 100;
         if (pct > 3 && pct < 60) bodyFatPct = Number(pct.toFixed(1));
       }
@@ -169,6 +181,9 @@ export function parseWithingsCsv(csvText) {
         date: isoDate,
         weightKg,
         bodyFatPct,
+        muscleMassKg: muscleIdx >= 0 ? toKg(cols[muscleIdx]) : null,
+        hydrationKg: hydrationIdx >= 0 ? toKg(cols[hydrationIdx]) : null,
+        boneMassKg: boneIdx >= 0 ? toKg(cols[boneIdx]) : null,
         restingHr: null,
         hrv: null,
         sleepHrs: null,

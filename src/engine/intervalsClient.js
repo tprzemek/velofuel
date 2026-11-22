@@ -1,5 +1,5 @@
 // Direct browser client for Intervals.icu REST API (CORS-enabled by intervals.icu)
-// Pulls Withings/Google Health wellness data, completed rides, and upcoming planned workouts.
+// Pulls Rider Profile (FTP, height, age, sex), Withings/wellness data, completed rides, and planned workouts.
 
 function formatDate(d) {
   const y = d.getFullYear();
@@ -37,6 +37,50 @@ function inferIntensity(item) {
   return durationMin > 0 ? 'endurance' : 'rest';
 }
 
+function parseAthleteProfile(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const patch = {};
+
+  if (raw.name) patch.name = String(raw.name);
+
+  // Pull cycling FTP from sportSettings (Ride / VirtualRide) or top-level fallback
+  const sports = Array.isArray(raw.sportSettings) ? raw.sportSettings : [];
+  const rideSetting =
+    sports.find((s) => Array.isArray(s.types) && s.types.some((t) => /^ride|virtualride|gravelride|mountainbikeride$/i.test(t))) ||
+    sports.find((s) => typeof s.ftp === 'number' && s.ftp > 50);
+
+  const ftp = rideSetting?.ftp || rideSetting?.indoor_ftp || raw.ftp || raw.icu_ftp;
+  if (typeof ftp === 'number' && ftp >= 80 && ftp <= 600) {
+    patch.ftp = Math.round(ftp);
+  }
+
+  // Height (Intervals.icu stores meters e.g. 1.79 or cm e.g. 179)
+  const rawHeight = Number(raw.height || raw.icu_height || 0);
+  if (rawHeight > 0.5 && rawHeight < 3.0) {
+    patch.heightCm = Math.round(rawHeight * 100);
+  } else if (rawHeight >= 100 && rawHeight <= 240) {
+    patch.heightCm = Math.round(rawHeight);
+  }
+
+  // Sex
+  const rawSex = String(raw.sex || '').toUpperCase();
+  if (rawSex === 'M' || rawSex === 'MALE') patch.sex = 'male';
+  if (rawSex === 'F' || rawSex === 'FEMALE') patch.sex = 'female';
+
+  // Age from date of birth
+  const dob = raw.icu_date_of_birth || raw.dob;
+  if (dob && /^\d{4}-\d{2}-\d{2}/.test(String(dob))) {
+    const birth = new Date(String(dob).slice(0, 10));
+    const now = new Date();
+    let age = now.getFullYear() - birth.getFullYear();
+    const m = now.getMonth() - birth.getMonth();
+    if (m < 0 || (m === 0 && now.getDate() < birth.getDate())) age -= 1;
+    if (age >= 14 && age <= 95) patch.age = age;
+  }
+
+  return Object.keys(patch).length > 0 ? patch : null;
+}
+
 export async function syncIntervalsDirect({ athleteId = '0', apiKey, daysBack = 28, daysForward = 7 }) {
   if (!apiKey || !String(apiKey).trim()) {
     throw new Error('Paste your Intervals.icu API key first (from intervals.icu → Settings → Developer Settings).');
@@ -54,19 +98,23 @@ export async function syncIntervalsDirect({ athleteId = '0', apiKey, daysBack = 
 
   const base = `https://intervals.icu/api/v1/athlete/${id}`;
 
-  const [wellnessRes, activitiesRes, eventsRes] = await Promise.all([
+  const [athleteRes, wellnessRes, activitiesRes, eventsRes] = await Promise.all([
+    fetch(base, { headers }),
     fetch(`${base}/wellness?oldest=${oldestWellness}&newest=${newestToday}`, { headers }),
     fetch(`${base}/activities?oldest=${oldestActs}&newest=${newestToday}`, { headers }),
     fetch(`${base}/events?oldest=${oldestActs}&newest=${newestEvents}&category=WORKOUT`, { headers }),
   ]);
 
-  if (wellnessRes.status === 401 || wellnessRes.status === 403) {
+  if (wellnessRes.status === 401 || wellnessRes.status === 403 || athleteRes.status === 401) {
     throw new Error('Intervals.icu rejected your credentials. Check your Athlete ID (or use "0") and API key.');
   }
 
+  const athleteRaw = athleteRes.ok ? await athleteRes.json() : null;
   const wellnessRaw = wellnessRes.ok ? await wellnessRes.json() : [];
   const activitiesRaw = activitiesRes.ok ? await activitiesRes.json() : [];
   const eventsRaw = eventsRes.ok ? await eventsRes.json() : [];
+
+  const profilePatch = parseAthleteProfile(athleteRaw);
 
   const biometrics = (Array.isArray(wellnessRaw) ? wellnessRaw : [])
     .filter((w) => w && (w.weight || w.bodyFat || w.restingHR || w.hrv))
@@ -141,10 +189,12 @@ export async function syncIntervalsDirect({ athleteId = '0', apiKey, daysBack = 
   return {
     ok: true,
     syncedAt: new Date().toISOString(),
+    profilePatch,
     biometrics,
     completedSessions,
     plannedSessions,
     diagnostics: {
+      pulledFtp: profilePatch?.ftp || null,
       wellnessCount: biometrics.length,
       completedCount: completedSessions.length,
       plannedCount: plannedSessions.length,

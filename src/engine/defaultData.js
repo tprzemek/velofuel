@@ -1,3 +1,5 @@
+import { DEFAULT_UNITS } from './units';
+
 export function getIsoDate(offsetDays = 0) {
   const d = new Date();
   d.setDate(d.getDate() + offsetDays);
@@ -23,7 +25,27 @@ export const DEFAULT_PROFILE = {
   proteinGPerKgMaintain: 1.75,
   defaultWeightKg: 74.2,
   defaultBodyFatPct: 14.8,
+  units: DEFAULT_UNITS,
+  defaultBottleMl: 650,
+  electrolyteTabMg: 500,
 };
+
+export const DEFAULT_SUPPLEMENTS = [
+  {
+    id: 'supp-iron-vitc',
+    name: 'Iron + Vitamin C',
+    inDailyStack: true,
+    note: 'Take away from coffee/tea — Vitamin C boosts iron absorption.',
+    micros: { iron: 25, vitC: 500, vitD: 0, calcium: 0, magnesium: 0, sodium: 0 },
+  },
+  {
+    id: 'supp-multi',
+    name: 'Daily Multivitamin',
+    inDailyStack: true,
+    note: 'Covers baseline Vitamin D, B-vitamins & trace minerals.',
+    micros: { iron: 8, vitC: 90, vitD: 25, calcium: 200, magnesium: 100, sodium: 0 },
+  },
+];
 
 // Flexible Ingredient-List Home Staples — add, edit, or remove ANY ingredient freely!
 // role: 'carb' (auto-scales with ride demand), 'protein' (auto-scales to hit protein), or 'fixed' (stays at set grams)
@@ -32,6 +54,7 @@ export const DEFAULT_STAPLES = [
     id: 'staple-oats-berries',
     name: 'Oats & Berries',
     mealTypes: ['breakfast'],
+    dailySlot: 'breakfast',
     prepNote: 'Simple everyday breakfast. Oats automatically scale up on hard ride days and trim back on rest days.',
     ingredients: [
       {
@@ -41,7 +64,7 @@ export const DEFAULT_STAPLES = [
         minGrams: 35,
         maxGrams: 140,
         role: 'carb',
-        per100g: { carbs: 66.3, protein: 16.9, fat: 6.9, fiber: 10.6, iron: 4.7, calcium: 54, vitD: 0, magnesium: 177, sodium: 2 },
+        per100g: { carbs: 66.3, protein: 16.9, fat: 6.9, fiber: 10.6, iron: 4.7, calcium: 54, vitD: 0, vitC: 0, magnesium: 177, sodium: 2 },
       },
       {
         id: 'ing-berries',
@@ -50,7 +73,7 @@ export const DEFAULT_STAPLES = [
         minGrams: 50,
         maxGrams: 200,
         role: 'fixed',
-        per100g: { carbs: 14.5, protein: 0.7, fat: 0.3, fiber: 2.4, iron: 0.3, calcium: 6, vitD: 0, magnesium: 6, sodium: 1 },
+        per100g: { carbs: 14.5, protein: 0.7, fat: 0.3, fiber: 2.4, iron: 0.3, calcium: 6, vitD: 0, vitC: 9.7, magnesium: 6, sodium: 1 },
       },
       {
         id: 'ing-milk',
@@ -59,7 +82,7 @@ export const DEFAULT_STAPLES = [
         minGrams: 100,
         maxGrams: 350,
         role: 'fixed',
-        per100g: { carbs: 4.8, protein: 3.3, fat: 2.0, fiber: 0, iron: 0, calcium: 120, vitD: 1.2, magnesium: 11, sodium: 44 },
+        per100g: { carbs: 4.8, protein: 3.3, fat: 2.0, fiber: 0, iron: 0, calcium: 120, vitD: 1.2, vitC: 0, magnesium: 11, sodium: 44 },
       },
     ],
   },
@@ -450,7 +473,7 @@ export function createDefaultLogs() {
         fat: 11,
         kcal: 539,
         uncertaintyPct: 0,
-        micros: { fiber: 12.5, iron: 4.8, calcium: 297, vitD: 2.4, magnesium: 196, sodium: 91 },
+        micros: { fiber: 12.5, iron: 4.8, vitC: 10, calcium: 297, vitD: 2.4, magnesium: 196, sodium: 91 },
         loggedAt: '07:35',
       },
     ],

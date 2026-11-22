@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Scale, Check, X, Sparkles } from 'lucide-react';
 import { computeStapleNutrition, scaleStapleToTargets } from '../engine/fuelingEngine';
+import { foodDisplayToGrams, foodUnitLabel, formatFoodAmount, gramsToFoodDisplay } from '../engine/units';
 import NumericInput from './NumericInput';
 
 export default function StapleScalerModal({
@@ -9,8 +10,11 @@ export default function StapleScalerModal({
   slotInfo,
   staples,
   remainingMacros,
+  units,
   onLogEntry,
 }) {
+  const foodUnit = foodUnitLabel(units);
+
   const matchingStaples = useMemo(() => {
     if (!slotInfo) return staples;
     const preferred = staples.filter((s) => s.mealTypes?.includes(slotInfo.slot));
@@ -68,25 +72,29 @@ export default function StapleScalerModal({
   const mergedGrams = { ...autoScaled.gramsById, ...(activeState.gramsOverrides || {}) };
   const liveCalc = computeStapleNutrition(selectedStaple, mergedGrams);
 
-  const setIngredientGrams = (ingId, val) => {
+  const setIngredientGrams = (ingId, valGrams) => {
     setSelectionState({
       ...activeState,
       slotKey,
       gramsOverrides: {
         ...(activeState.gramsOverrides || {}),
-        [ingId]: Math.max(0, Number(val) || 0),
+        [ingId]: Math.max(0, Number(valGrams) || 0),
       },
     });
   };
 
   const handleSave = () => {
+    const formattedDetail = liveCalc.resolvedItems
+      .map((i) => `${formatFoodAmount(i.grams, units)} ${i.name}`)
+      .join(' · ');
+
     onLogEntry({
       id: `log-${Date.now()}`,
       slot: slotInfo.slot,
       type: 'staple',
       stapleId: selectedStaple.id,
       title: selectedStaple.name,
-      detail: liveCalc.detail,
+      detail: formattedDetail,
       carbs: liveCalc.carbs,
       protein: liveCalc.protein,
       fat: liveCalc.fat,
@@ -104,7 +112,7 @@ export default function StapleScalerModal({
         <div className="modal-handle" />
         <div className="modal-head">
           <div>
-            <h2 className="modal-title">Scale Home Meal · {slotInfo.label}</h2>
+            <h2 className="modal-title">Scale Saved Meal · {slotInfo.label}</h2>
             <div className="muted-text" style={{ marginTop: 2 }}>
               Target: <strong className="mono">{targetCarbs}g C</strong> ·{' '}
               <strong className="mono">{targetProtein}g P</strong>
@@ -147,7 +155,7 @@ export default function StapleScalerModal({
         )}
 
         <div className="field" style={{ marginBottom: 12 }}>
-          <label htmlFor="staple-select">Choose from your Home Staples</label>
+          <label htmlFor="staple-select">Choose from your Saved Meals</label>
           <select
             id="staple-select"
             className="select"
@@ -173,7 +181,7 @@ export default function StapleScalerModal({
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
             <Scale size={15} color="var(--code-high)" />
             <span style={{ fontSize: '0.78rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-              Kitchen Scale Weights
+              Kitchen Scale Weights ({foodUnit})
             </span>
           </div>
 
@@ -208,14 +216,15 @@ export default function StapleScalerModal({
                       <NumericInput
                         aria-label={`${ing.name} grams`}
                         min={0}
-                        max={1500}
+                        max={foodUnit === 'g' ? 1500 : 100}
+                        step={foodUnit === 'g' ? 1 : 0.1}
                         fallback={0}
                         className="input mono"
                         style={{ width: 66, padding: '3px 6px', fontSize: '0.82rem', fontWeight: 700, color: accent }}
-                        value={g}
-                        onChange={(val) => setIngredientGrams(ing.id, val)}
+                        value={gramsToFoodDisplay(g, units)}
+                        onChange={(val) => setIngredientGrams(ing.id, foodDisplayToGrams(val, units))}
                       />
-                      <span style={{ fontSize: '0.72rem', color: 'var(--ink-muted)' }}>g</span>
+                      <span style={{ fontSize: '0.72rem', color: 'var(--ink-muted)' }}>{foodUnit}</span>
                     </div>
                   </div>
                   <input

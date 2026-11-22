@@ -2,20 +2,27 @@ import { useRef, useState } from 'react';
 import { Scale, Upload, TrendingDown, ShieldCheck, Activity, Check } from 'lucide-react';
 import { getIsoDate } from '../engine/defaultData';
 import { parseWithingsCsv } from '../engine/biometricsEngine';
+import { displayToKg, formatWeight, formatWeightRate, kgToDisplay } from '../engine/units';
 
-function WeightTrendChart({ series }) {
+function WeightTrendChart({ series, units }) {
   if (!series || series.length < 2) {
     return <p className="muted-text">Add at least 2 morning weigh-ins to visualize your 7-day trend.</p>;
   }
-  const recent = series.slice(-21);
-  const weights = recent.flatMap((d) => [d.weightKg, d.trendWeightKg]);
-  const minW = Math.min(...weights) - 0.4;
-  const maxW = Math.max(...weights) + 0.4;
-  const range = Math.max(0.8, maxW - minW);
+  const u = units?.weight || 'kg';
+  const recent = series.slice(-21).map((d) => ({
+    ...d,
+    dispW: kgToDisplay(d.weightKg, units),
+    dispTrend: kgToDisplay(d.trendWeightKg, units),
+  }));
+  const weights = recent.flatMap((d) => [d.dispW, d.dispTrend]);
+  const margin = u === 'lbs' ? 0.9 : 0.4;
+  const minW = Math.min(...weights) - margin;
+  const maxW = Math.max(...weights) + margin;
+  const range = Math.max(u === 'lbs' ? 1.8 : 0.8, maxW - minW);
 
   const width = 440;
   const height = 148;
-  const padX = 28;
+  const padX = 34;
   const padY = 18;
   const plotW = width - padX * 2;
   const plotH = height - padY * 2;
@@ -24,13 +31,12 @@ function WeightTrendChart({ series }) {
   const yAt = (w) => padY + ((maxW - w) / range) * plotH;
 
   const trendPath = recent
-    .map((pt, i) => `${i === 0 ? 'M' : 'L'} ${xAt(i).toFixed(1)} ${yAt(pt.trendWeightKg).toFixed(1)}`)
+    .map((pt, i) => `${i === 0 ? 'M' : 'L'} ${xAt(i).toFixed(1)} ${yAt(pt.dispTrend).toFixed(1)}`)
     .join(' ');
 
   return (
     <div className="chart-wrap">
       <svg viewBox={`0 0 ${width} ${height}`} width="100%" height="150" role="img" aria-label="Morning weight and 7-day trend chart">
-        {/* Horizontal guide lines */}
         {[0, 0.5, 1].map((frac) => {
           const y = padY + frac * plotH;
           const label = (maxW - frac * range).toFixed(1);
@@ -44,25 +50,22 @@ function WeightTrendChart({ series }) {
           );
         })}
 
-        {/* 7-day EMA trend line */}
         <path d={trendPath} fill="none" stroke="#147A53" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
 
-        {/* Raw morning Withings scale dots */}
         {recent.map((pt, i) => (
           <circle
             key={pt.date}
             cx={xAt(i)}
-            cy={yAt(pt.weightKg)}
+            cy={yAt(pt.dispW)}
             r="3.4"
             fill="#FFFFFF"
             stroke="#14181C"
             strokeWidth="1.6"
           >
-            <title>{`${pt.date}: ${pt.weightKg}kg (7d trend ${pt.trendWeightKg}kg)`}</title>
+            <title>{`${pt.date}: ${pt.dispW} ${u} (7d avg ${pt.dispTrend} ${u})`}</title>
           </circle>
         ))}
 
-        {/* X labels */}
         <text x={padX} y={height - 3} fontSize="9" fill="#7D8690" fontFamily="JetBrains Mono, monospace">
           {recent[0].date.slice(5)}
         </text>
@@ -71,7 +74,7 @@ function WeightTrendChart({ series }) {
         </text>
       </svg>
       <div style={{ display: 'flex', gap: 14, fontSize: '0.7rem', color: 'var(--ink-muted)', marginTop: 2 }}>
-        <span>● Raw Morning Scale</span>
+        <span>● Raw Morning Scale ({u})</span>
         <span style={{ color: 'var(--code-high)', fontWeight: 700 }}>— 7-Day Average Trend (Drives Daily Targets)</span>
       </div>
     </div>
@@ -80,31 +83,34 @@ function WeightTrendChart({ series }) {
 
 export default function BodyView({
   profile,
+  units,
   biometricsSummary,
   onUpdateProfile,
   onAddBiometric,
   onImportBiometrics,
   showToast,
 }) {
+  const weightUnit = units?.weight || 'kg';
   const [date, setDate] = useState(getIsoDate(0));
-  const [weightInput, setWeightInput] = useState(biometricsSummary.latestWeightKg);
-  const [bfInput, setBfInput] = useState(biometricsSummary.latestBodyFatPct);
+  const [weightInput, setWeightInput] = useState(String(kgToDisplay(biometricsSummary.latestWeightKg, units)));
+  const [bfInput, setBfInput] = useState(String(biometricsSummary.latestBodyFatPct));
   const csvRef = useRef(null);
 
   const handleLogMorning = (e) => {
     e.preventDefault();
-    const w = parseFloat(weightInput);
+    const rawW = parseFloat(weightInput);
     const bf = parseFloat(bfInput);
-    if (Number.isNaN(w) || w < 35 || w > 180) return;
+    const weightKg = displayToKg(rawW, units);
+    if (Number.isNaN(weightKg) || weightKg < 35 || weightKg > 180) return;
     onAddBiometric({
       date,
-      weightKg: Number(w.toFixed(2)),
+      weightKg,
       bodyFatPct: !Number.isNaN(bf) && bf > 3 && bf < 55 ? Number(bf.toFixed(1)) : null,
       restingHr: biometricsSummary.latestRestingHr,
       hrv: biometricsSummary.latestHrv,
       source: 'manual',
     });
-    showToast(`Saved morning weigh-in (${w.toFixed(1)} kg)`);
+    showToast(`Saved morning weigh-in (${formatWeight(weightKg, units)})`);
   };
 
   const handleCsvUpload = (e) => {
@@ -125,6 +131,10 @@ export default function BodyView({
   };
 
   const wPerKg = Number((profile.ftp / Math.max(biometricsSummary.trendWeightKg, 45)).toFixed(2));
+  const hasExtendedScaleMetrics =
+    biometricsSummary.latestMuscleMassKg != null ||
+    biometricsSummary.latestHydrationKg != null ||
+    biometricsSummary.latestBoneMassKg != null;
 
   return (
     <>
@@ -132,7 +142,7 @@ export default function BodyView({
       <section className="card">
         <div className="section-header">
           <div>
-            <h1 className="section-title" style={{ fontSize: '1.08rem' }}>Body Composition & Cut Coach</h1>
+            <h1 className="section-title" style={{ fontSize: '1.08rem' }}>Body Composition &amp; Cut Coach</h1>
             <p className="muted-text" style={{ marginTop: 3 }}>
               Lose fat on Rest/Easy days while keeping protein high and hard rides 100% fueled.
             </p>
@@ -162,7 +172,7 @@ export default function BodyView({
             <div className="range-head">
               <span style={{ fontWeight: 700 }}>Target Fat-Loss Pace</span>
               <strong className="mono" style={{ color: 'var(--code-high)' }}>
-                -{profile.targetLossKgPerWeek.toFixed(2)} kg / week
+                {formatWeightRate(-profile.targetLossKgPerWeek, units)}
               </strong>
             </div>
             <input
@@ -174,7 +184,7 @@ export default function BodyView({
               onChange={(e) => onUpdateProfile({ targetLossKgPerWeek: Number(e.target.value) })}
             />
             <p className="muted-text" style={{ fontSize: '0.73rem' }}>
-              Sweet spot: <strong>0.25–0.40 kg/wk</strong> (daily deficit capped ≤600 kcal on rest days, paused on key sessions).
+              Sweet spot: <strong>{weightUnit === 'lbs' ? '0.55–0.90 lbs/wk' : '0.25–0.40 kg/wk'}</strong> (daily deficit capped ≤600 kcal on rest days, paused on key sessions).
             </p>
             {biometricsSummary.latestBodyFatPct <= (profile.sex === 'female' ? 16.5 : 8.5) && (
               <div className="notice-strip" style={{ marginTop: 6 }}>
@@ -197,30 +207,55 @@ export default function BodyView({
       <section className="card">
         <div className="section-header">
           <h2 className="section-title">Withings Morning Weigh-Ins</h2>
-          <span className="section-kicker">Synced via Intervals.icu / CSV</span>
+          <span className="section-kicker">Direct Withings · Intervals.icu · CSV</span>
         </div>
 
         <div className="stat-pair-grid">
           <div className="stat-box">
             <div className="stat-box-label">7-Day Average Weight</div>
-            <div className="stat-box-num mono">{biometricsSummary.trendWeightKg.toFixed(1)} kg</div>
+            <div className="stat-box-num mono">{formatWeight(biometricsSummary.trendWeightKg, units)}</div>
             <div className="stat-box-sub mono">
-              Today: {biometricsSummary.latestWeightKg.toFixed(1)} kg ·{' '}
+              Today: {formatWeight(biometricsSummary.latestWeightKg, units)} ·{' '}
               <span style={{ color: biometricsSummary.weeklyRateKg <= 0 ? 'var(--code-high)' : 'var(--code-med)' }}>
-                {biometricsSummary.weeklyRateKg > 0 ? '+' : ''}{biometricsSummary.weeklyRateKg} kg/wk
+                {formatWeightRate(biometricsSummary.weeklyRateKg, units)}
               </span>
             </div>
           </div>
 
           <div className="stat-box">
             <div className="stat-box-label">Lean Mass (Muscle)</div>
-            <div className="stat-box-num mono">{biometricsSummary.leanMassKg.toFixed(1)} kg</div>
+            <div className="stat-box-num mono">{formatWeight(biometricsSummary.leanMassKg, units)}</div>
             <div className="stat-box-sub mono">
               Body fat {biometricsSummary.latestBodyFatPct.toFixed(1)}% ·{' '}
-              {biometricsSummary.leanMassDeltaKg >= -0.15 ? 'Protected' : `${biometricsSummary.leanMassDeltaKg} kg`}
+              {biometricsSummary.leanMassDeltaKg >= -0.15
+                ? 'Protected'
+                : formatWeight(biometricsSummary.leanMassDeltaKg, units)}
             </div>
           </div>
         </div>
+
+        {hasExtendedScaleMetrics && (
+          <div className="on-bike-grid" style={{ marginTop: 10 }}>
+            {biometricsSummary.latestMuscleMassKg != null && (
+              <div className="mini-stat">
+                <div className="mini-stat-label">Muscle Mass</div>
+                <div className="mini-stat-val mono">{formatWeight(biometricsSummary.latestMuscleMassKg, units)}</div>
+              </div>
+            )}
+            {biometricsSummary.latestHydrationKg != null && (
+              <div className="mini-stat">
+                <div className="mini-stat-label">Body Water</div>
+                <div className="mini-stat-val mono">{formatWeight(biometricsSummary.latestHydrationKg, units)}</div>
+              </div>
+            )}
+            {biometricsSummary.latestBoneMassKg != null && (
+              <div className="mini-stat">
+                <div className="mini-stat-label">Bone Mass</div>
+                <div className="mini-stat-val mono">{formatWeight(biometricsSummary.latestBoneMassKg, units)}</div>
+              </div>
+            )}
+          </div>
+        )}
 
         {(biometricsSummary.latestRestingHr || biometricsSummary.latestHrv) && (
           <div style={{ display: 'flex', gap: 10, marginTop: 10, fontSize: '0.75rem', color: 'var(--ink-secondary)' }} className="mono">
@@ -231,7 +266,7 @@ export default function BodyView({
           </div>
         )}
 
-        <WeightTrendChart series={biometricsSummary.series} />
+        <WeightTrendChart series={biometricsSummary.series} units={units} />
       </section>
 
       {/* Daily Burn Auto-Check */}
@@ -288,7 +323,7 @@ export default function BodyView({
               <input id="bio-date" type="date" className="input mono" value={date} onChange={(e) => setDate(e.target.value)} />
             </div>
             <div className="field">
-              <label htmlFor="bio-weight">Weight (kg)</label>
+              <label htmlFor="bio-weight">Weight ({weightUnit})</label>
               <input
                 id="bio-weight"
                 type="number"
@@ -321,8 +356,7 @@ export default function BodyView({
           </div>
         </form>
         <p className="muted-text" style={{ marginTop: 8, fontSize: '0.73rem' }}>
-          Tip: If Intervals.icu syncs your Withings weight via Google Health without body fat %, drop in a Withings{' '}
-          <code>weight.csv</code> export anytime to unlock Lean Mass tracking.
+          Tip: Connect your Withings scale directly on the <strong>Sync</strong> tab to automatically pull Body Fat %, Muscle Mass, Body Water, and Bone Mass every morning — or upload a Withings <code>weight.csv</code> export anytime.
         </p>
       </section>
     </>
