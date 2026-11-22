@@ -19,8 +19,9 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { BOTTLE_SIZE_OPTIONS, scaleStapleToTargets, sumDailyLogs } from '../engine/fuelingEngine';
-import { formatLiquid, formatSodiumPractical } from '../engine/units';
+import { formatFoodAmount, formatLiquid, formatSodiumPractical } from '../engine/units';
 import NumericInput from './NumericInput';
+import BarcodeScannerModal from './BarcodeScannerModal';
 
 export default function TodayView({
   plan,
@@ -49,6 +50,7 @@ export default function TodayView({
   onNavigateTab,
 }) {
   const existingOnBikeLog = logs.find((l) => l.slot === 'on_bike' && l.type === 'on_bike') || null;
+  const hasAnyOnBikeLog = logs.some((l) => l.slot === 'on_bike');
   const loggedOnBikeCarbs = logs
     .filter((l) => l.slot === 'on_bike')
     .reduce((sum, l) => sum + (Number(l.carbs) || 0), 0);
@@ -59,13 +61,25 @@ export default function TodayView({
   const [actualRideCarbsInput, setActualRideCarbsInput] = useState(
     existingOnBikeLog?.carbs ?? plan.onBikePlan?.totalCarbs ?? 0
   );
+  const [actualRideProteinInput, setActualRideProteinInput] = useState(existingOnBikeLog?.protein ?? 0);
+  const [actualRideFatInput, setActualRideFatInput] = useState(existingOnBikeLog?.fat ?? 0);
+  const [actualRideSodiumInput, setActualRideSodiumInput] = useState(
+    existingOnBikeLog?.micros?.sodium ?? plan.onBikePlan?.totalSodiumMg ?? 0
+  );
+  const [completeScannedItems, setCompleteScannedItems] = useState([]);
   const [syncRideCarbsOnComplete, setSyncRideCarbsOnComplete] = useState(true);
 
   const [editingOnBike, setEditingOnBike] = useState(false);
   const [editingOnBikeId, setEditingOnBikeId] = useState(null);
   const [onBikeCarbsInput, setOnBikeCarbsInput] = useState(plan.onBikePlan?.totalCarbs ?? 0);
+  const [onBikeProteinInput, setOnBikeProteinInput] = useState(0);
+  const [onBikeFatInput, setOnBikeFatInput] = useState(0);
   const [onBikeSodiumInput, setOnBikeSodiumInput] = useState(plan.onBikePlan?.totalSodiumMg ?? 0);
   const [onBikeBottlesInput, setOnBikeBottlesInput] = useState(plan.onBikePlan?.bottles ?? 1);
+  const [onBikeScannedItems, setOnBikeScannedItems] = useState([]);
+
+  // Direct barcode scanner target inside ride fuel editors ('onbike' | 'complete' | null)
+  const [rideScannerTarget, setRideScannerTarget] = useState(null);
 
   const totals = sumDailyLogs(logs);
   const remaining = {
@@ -82,29 +96,63 @@ export default function TodayView({
   const openOnBikeEditor = (entry = null) => {
     setEditingOnBikeId(entry?.id || existingOnBikeLog?.id || null);
     setOnBikeCarbsInput(entry?.carbs ?? existingOnBikeLog?.carbs ?? plan.onBikePlan?.totalCarbs ?? 0);
+    setOnBikeProteinInput(entry?.protein ?? existingOnBikeLog?.protein ?? 0);
+    setOnBikeFatInput(entry?.fat ?? existingOnBikeLog?.fat ?? 0);
     setOnBikeSodiumInput(
       entry?.micros?.sodium ?? existingOnBikeLog?.micros?.sodium ?? plan.onBikePlan?.totalSodiumMg ?? 0
     );
     setOnBikeBottlesInput(entry?.bottles ?? existingOnBikeLog?.bottles ?? plan.onBikePlan?.bottles ?? 1);
+    setOnBikeScannedItems([]);
     setEditingOnBike(true);
+  };
+
+  const handleScannedRideProduct = (food) => {
+    const f = (Number(food.grams) || 100) / 100;
+    const p100 = food.per100g || {};
+    const addC = Math.round((p100.carbs || 0) * f);
+    const addP = Math.round((p100.protein || 0) * f);
+    const addF = Math.round((p100.fat || 0) * f);
+    const addNa = Math.round((p100.sodium || 0) * f);
+    const label = `${formatFoodAmount(food.grams, units)} ${food.name} (+${addC}C${addP > 0 ? ` · +${addP}P` : ''}${addF > 0 ? ` · +${addF}F` : ''})`;
+
+    if (rideScannerTarget === 'complete') {
+      setActualRideCarbsInput((v) => (Number(v) || 0) + addC);
+      setActualRideProteinInput((v) => (Number(v) || 0) + addP);
+      setActualRideFatInput((v) => (Number(v) || 0) + addF);
+      setActualRideSodiumInput((v) => (Number(v) || 0) + addNa);
+      setCompleteScannedItems((prev) => [...prev, label]);
+    } else if (rideScannerTarget === 'onbike') {
+      setOnBikeCarbsInput((v) => (Number(v) || 0) + addC);
+      setOnBikeProteinInput((v) => (Number(v) || 0) + addP);
+      setOnBikeFatInput((v) => (Number(v) || 0) + addF);
+      setOnBikeSodiumInput((v) => (Number(v) || 0) + addNa);
+      setOnBikeScannedItems((prev) => [...prev, label]);
+    }
+    setRideScannerTarget(null);
   };
 
   const handleSaveOnBikeCustom = (e) => {
     e.preventDefault();
     const carbs = Math.max(0, Math.round(Number(onBikeCarbsInput) || 0));
+    const protein = Math.max(0, Math.round(Number(onBikeProteinInput) || 0));
+    const fat = Math.max(0, Math.round(Number(onBikeFatInput) || 0));
     const sodiumMg = Math.max(0, Math.round(Number(onBikeSodiumInput) || 0));
     const bottles = Math.max(0, Number(onBikeBottlesInput) || 0);
     onSaveOnBikeLog({
       existingId: editingOnBikeId,
       carbs,
+      protein,
+      fat,
       sodiumMg,
       bottles,
       bottleLabel: plan.onBikePlan?.bottleLabel || formatLiquid(profile?.defaultBottleMl || 650, units),
+      scannedItems: onBikeScannedItems,
       durationMin: session?.durationMin || 0,
       plannedCarbs: plan.onBikePlan?.totalCarbs || 0,
     });
     setEditingOnBike(false);
     setEditingOnBikeId(null);
+    setOnBikeScannedItems([]);
   };
 
   const handleSaveCompletedRide = (e) => {
@@ -113,19 +161,22 @@ export default function TodayView({
     const mins = Number(actualMinInput) || 0;
     onCompleteRide(plan.date, kj, mins);
     if (syncRideCarbsOnComplete) {
-      const carbs = Math.max(0, Math.round(Number(actualRideCarbsInput) || 0));
       onSaveOnBikeLog({
         existingId: existingOnBikeLog?.id || null,
-        carbs,
-        sodiumMg: existingOnBikeLog?.micros?.sodium ?? plan.onBikePlan?.totalSodiumMg ?? 0,
+        carbs: Math.max(0, Math.round(Number(actualRideCarbsInput) || 0)),
+        protein: Math.max(0, Math.round(Number(actualRideProteinInput) || 0)),
+        fat: Math.max(0, Math.round(Number(actualRideFatInput) || 0)),
+        sodiumMg: Math.max(0, Math.round(Number(actualRideSodiumInput) || 0)),
         bottles: existingOnBikeLog?.bottles ?? plan.onBikePlan?.bottles ?? 1,
         bottleLabel: plan.onBikePlan?.bottleLabel || formatLiquid(profile?.defaultBottleMl || 650, units),
+        scannedItems: completeScannedItems,
         durationMin: mins,
         plannedCarbs: plan.onBikePlan?.totalCarbs || 0,
         silent: true,
       });
     }
     setEditingActual(false);
+    setCompleteScannedItems([]);
   };
 
   const microsList = [
@@ -345,6 +396,12 @@ export default function TodayView({
                   setActualRideCarbsInput(
                     existingOnBikeLog?.carbs ?? session.carbsIngested ?? plan.onBikePlan?.totalCarbs ?? 0
                   );
+                  setActualRideProteinInput(existingOnBikeLog?.protein ?? 0);
+                  setActualRideFatInput(existingOnBikeLog?.fat ?? 0);
+                  setActualRideSodiumInput(
+                    existingOnBikeLog?.micros?.sodium ?? plan.onBikePlan?.totalSodiumMg ?? 0
+                  );
+                  setCompleteScannedItems([]);
                   setEditingActual((v) => !v);
                 }}
               >
@@ -382,13 +439,24 @@ export default function TodayView({
                   fallback={60}
                 />
               </div>
-              <div className="field full">
-                <label htmlFor="actual-ride-carbs">
-                  Actual On-Bike Carbs Consumed (g){' '}
-                  <span style={{ fontWeight: 500, color: 'var(--ink-muted)' }}>
-                    (prescribed: {plan.onBikePlan?.totalCarbs || 0}g)
-                  </span>
-                </label>
+
+              <div className="field full" style={{ marginTop: 2 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                  <label htmlFor="actual-ride-carbs" style={{ margin: 0 }}>
+                    Actual Ride Carbs (g){' '}
+                    <span style={{ fontWeight: 500, color: 'var(--ink-muted)' }}>
+                      (plan: {plan.onBikePlan?.totalCarbs || 0}g)
+                    </span>
+                  </label>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-soft"
+                    style={{ padding: '4px 8px', fontSize: '0.7rem' }}
+                    onClick={() => setRideScannerTarget('complete')}
+                  >
+                    <ScanBarcode size={13} /> Scan Bar / Gel
+                  </button>
+                </div>
                 <NumericInput
                   id="actual-ride-carbs"
                   className="input mono"
@@ -399,7 +467,43 @@ export default function TodayView({
                   fallback={0}
                 />
               </div>
+
+              <div className="field">
+                <label htmlFor="actual-ride-prot">Ride Protein (g)</label>
+                <NumericInput
+                  id="actual-ride-prot"
+                  className="input mono"
+                  value={actualRideProteinInput}
+                  onChange={setActualRideProteinInput}
+                  min={0}
+                  max={200}
+                  fallback={0}
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="actual-ride-fat">Ride Fat (g)</label>
+                <NumericInput
+                  id="actual-ride-fat"
+                  className="input mono"
+                  value={actualRideFatInput}
+                  onChange={setActualRideFatInput}
+                  min={0}
+                  max={200}
+                  fallback={0}
+                />
+              </div>
             </div>
+
+            {completeScannedItems.length > 0 && (
+              <div className="chip-row" style={{ marginTop: 8 }}>
+                {completeScannedItems.map((item, idx) => (
+                  <span key={`${item}-${idx}`} className="chip mono" style={{ fontSize: '0.68rem', background: 'var(--code-high-bg)', color: 'var(--code-high)', borderColor: 'transparent' }}>
+                    {item}
+                  </span>
+                ))}
+              </div>
+            )}
+
             <label
               style={{
                 display: 'flex',
@@ -416,7 +520,7 @@ export default function TodayView({
                 checked={syncRideCarbsOnComplete}
                 onChange={(e) => setSyncRideCarbsOnComplete(e.target.checked)}
               />
-              Log actual on-bike carbs &amp; recalculate what&apos;s left today
+              Log actual on-bike fuel &amp; recalculate what&apos;s left today
             </label>
             <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
               <button type="submit" className="btn btn-accent btn-sm" style={{ flex: 1 }}>
@@ -440,10 +544,10 @@ export default function TodayView({
               </div>
               <div className="mini-stat">
                 <div className="mini-stat-label">
-                  {existingOnBikeLog ? 'Actual / Plan' : 'Total Ride Fuel'}
+                  {hasAnyOnBikeLog ? 'Actual / Plan' : 'Total Ride Fuel'}
                 </div>
                 <div className="mini-stat-val mono">
-                  {existingOnBikeLog
+                  {hasAnyOnBikeLog
                     ? `${loggedOnBikeCarbs} / ${plan.onBikePlan.totalCarbs}g`
                     : `${plan.onBikePlan.totalCarbs} g`}
                 </div>
@@ -603,7 +707,7 @@ export default function TodayView({
                   </div>
                 )}
 
-                {/* Inline Actual On-Bike Fuel Editor (modify carbs, sodium, bottles -> recalculates day) */}
+                {/* Inline Actual On-Bike Fuel Editor (manual Carbs/Protein/Fat/Sodium + barcode scan for bars/gels/mix) */}
                 {isOnBike && editingOnBike && (
                   <form
                     onSubmit={handleSaveOnBikeCustom}
@@ -615,9 +719,34 @@ export default function TodayView({
                       border: '1px solid var(--border-strong)',
                     }}
                   >
-                    <div style={{ fontWeight: 800, fontSize: '0.8rem', marginBottom: 8 }}>
-                      Actual Ride Fuel Consumed
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                      <span style={{ fontWeight: 800, fontSize: '0.8rem' }}>
+                        Actual Ride Fuel Consumed
+                      </span>
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-accent"
+                        style={{ padding: '4px 9px', fontSize: '0.72rem' }}
+                        onClick={() => setRideScannerTarget('onbike')}
+                      >
+                        <ScanBarcode size={13} /> Scan Bar / Gel / Mix
+                      </button>
                     </div>
+
+                    {onBikeScannedItems.length > 0 && (
+                      <div className="chip-row" style={{ marginBottom: 8 }}>
+                        {onBikeScannedItems.map((item, idx) => (
+                          <span
+                            key={`${item}-${idx}`}
+                            className="chip mono"
+                            style={{ fontSize: '0.68rem', background: 'var(--code-high-bg)', color: 'var(--code-high)', borderColor: 'transparent' }}
+                          >
+                            {item}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
                     <div className="field-grid">
                       <div className="field">
                         <label htmlFor="onbike-carbs">Actual Carbs (g)</label>
@@ -641,6 +770,30 @@ export default function TodayView({
                           fallback={0}
                           value={onBikeSodiumInput}
                           onChange={setOnBikeSodiumInput}
+                        />
+                      </div>
+                      <div className="field">
+                        <label htmlFor="onbike-protein">Protein (g) — bars/mix</label>
+                        <NumericInput
+                          id="onbike-protein"
+                          className="input mono"
+                          min={0}
+                          max={200}
+                          fallback={0}
+                          value={onBikeProteinInput}
+                          onChange={setOnBikeProteinInput}
+                        />
+                      </div>
+                      <div className="field">
+                        <label htmlFor="onbike-fat">Fat (g) — bars/nuts</label>
+                        <NumericInput
+                          id="onbike-fat"
+                          className="input mono"
+                          min={0}
+                          max={200}
+                          fallback={0}
+                          value={onBikeFatInput}
+                          onChange={setOnBikeFatInput}
                         />
                       </div>
                       <div className="field full">
@@ -923,6 +1076,13 @@ export default function TodayView({
           View 7-Day Periodized Carb Wave <ArrowRight size={14} />
         </button>
       </section>
+
+      <BarcodeScannerModal
+        isOpen={Boolean(rideScannerTarget)}
+        units={units}
+        onClose={() => setRideScannerTarget(null)}
+        onSelectFood={handleScannedRideProduct}
+      />
     </>
   );
 }

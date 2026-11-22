@@ -391,31 +391,39 @@ export default function App() {
   const handleSaveOnBikeLog = ({
     existingId,
     carbs,
+    protein = 0,
+    fat = 0,
     sodiumMg,
     bottles,
     bottleLabel,
+    scannedItems = [],
     durationMin,
     plannedCarbs,
     silent = false,
   }) => {
+    const c = Math.max(0, Math.round(Number(carbs) || 0));
+    const p = Math.max(0, Math.round(Number(protein) || 0));
+    const f = Math.max(0, Math.round(Number(fat) || 0));
+    const na = Math.max(0, Math.round(Number(sodiumMg) || 0));
     const hrs = Math.max(0.25, (Number(durationMin) || 60) / 60);
-    const rate = Math.round(carbs / hrs);
-    const diff = carbs - (plannedCarbs || 0);
+    const rate = Math.round(c / hrs);
+    const diff = c - (plannedCarbs || 0);
     const diffNote =
       diff === 0 ? 'on plan' : diff > 0 ? `+${diff}g vs plan` : `${diff}g vs plan`;
+    const scannedNote = scannedItems.length > 0 ? `${scannedItems.join(', ')} · ` : '';
     const entry = {
       id: existingId || `log-bike-${Date.now()}`,
       slot: 'on_bike',
       type: 'on_bike',
       title: `Actual Ride Fuel (${rate}g/hr)`,
-      detail: `${bottles}× ${bottleLabel} · ${sodiumMg}mg sodium · ${diffNote}`,
+      detail: `${scannedNote}${bottles}× ${bottleLabel} · ${na}mg sodium · ${diffNote}`,
       bottles,
-      carbs,
-      protein: 0,
-      fat: 0,
-      kcal: carbs * 4,
+      carbs: c,
+      protein: p,
+      fat: f,
+      kcal: c * 4 + p * 4 + f * 9,
       uncertaintyPct: 0,
-      micros: { fiber: 0, iron: 0, vitC: 0, calcium: 15, vitD: 0, magnesium: 25, sodium: sodiumMg },
+      micros: { fiber: 0, iron: 0, vitC: 0, calcium: 15, vitD: 0, magnesium: 25, sodium: na },
       loggedAt: new Date().toTimeString().slice(0, 5),
     };
 
@@ -435,12 +443,13 @@ export default function App() {
     });
 
     if (!silent) {
+      const macroText = p > 0 || f > 0 ? `${c}g C · ${p}g P · ${f}g F` : `${c}g carbs`;
       showToast(
         diff < 0
-          ? `Saved ${carbs}g actual ride carbs — +${Math.abs(diff)}g added to remaining meals today.`
+          ? `Saved ${macroText} ride fuel — +${Math.abs(diff)}g carbs added to remaining meals today.`
           : diff > 0
-          ? `Saved ${carbs}g actual ride carbs — remaining meals trimmed by ${diff}g.`
-          : `Saved ${carbs}g actual ride carbs (matches plan).`
+          ? `Saved ${macroText} ride fuel — remaining meals trimmed by ${diff}g carbs.`
+          : `Saved ${macroText} ride fuel (matches plan).`
       );
     }
   };

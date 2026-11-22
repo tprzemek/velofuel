@@ -110,44 +110,64 @@ def run_qa():
             page.get_by_role("dialog", name="Estimate Work Meal").locator(".chip").first.click()
             page.get_by_role("button", name="Log Work Meal & Auto-Adjust Evening Dinner").click()
 
-            # Modify Actual On-Bike Carbs (less than prescribed -> verify remaining day carbs recalculates!)
-            carbs_box = page.locator(".macro-bar-box").first
-            before_text = carbs_box.inner_text()
-            before_left = int(before_text.split("g left")[0].split("\n")[-1].strip())
+            # Modify Actual On-Bike Fuel (Carbs + Protein + Fat from bars/gels + inline Barcode Scan button!)
+            carbs_box = page.locator(".macro-bar-box").nth(0)
+            prot_box = page.locator(".macro-bar-box").nth(1)
+            fat_box = page.locator(".macro-bar-box").nth(2)
+
+            def parse_left(box):
+                return int(box.inner_text().split("g left")[0].split("\n")[-1].strip())
+
+            before_c = parse_left(carbs_box)
+            before_p = parse_left(prot_box)
+            before_f = parse_left(fat_box)
 
             page.get_by_role("button", name="Log Actual / Tweak").click()
+
+            # Verify inline Scan Bar / Gel / Mix barcode scanner opens cleanly from inside Actual Ride Fuel
+            page.get_by_role("button", name="Scan Bar / Gel / Mix").click()
+            assert page.get_by_role("dialog", name="Scan Food Barcode").is_visible()
+            page.get_by_role("dialog", name="Scan Food Barcode").get_by_role("button", name="Close").click()
+
             ob_carbs = page.get_by_label("Actual Carbs (g)")
             clear_and_verify_empty(ob_carbs, "Actual On-Bike Carbs input")
             ob_carbs.type("80")
+
+            ob_prot = page.get_by_label("Protein (g) — bars/mix")
+            clear_and_verify_empty(ob_prot, "Actual On-Bike Protein input")
+            ob_prot.type("10")
+
+            ob_fat = page.get_by_label("Fat (g) — bars/nuts")
+            clear_and_verify_empty(ob_fat, "Actual On-Bike Fat input")
+            ob_fat.type("8")
+
             page.get_by_role("button", name="Save Actual Ride Fuel").click()
 
-            after_80_text = carbs_box.inner_text()
-            after_80_left = int(after_80_text.split("g left")[0].split("\n")[-1].strip())
-            assert after_80_left == before_left - 80, f"Expected {before_left - 80}g left after 80g ride carbs, got {after_80_left}"
+            assert parse_left(carbs_box) == before_c - 80, f"Expected carbs left {before_c - 80}, got {parse_left(carbs_box)}"
+            assert parse_left(prot_box) == before_p - 10, f"Expected protein left {before_p - 10}, got {parse_left(prot_box)}"
+            assert parse_left(fat_box) == before_f - 8, f"Expected fat left {before_f - 8}, got {parse_left(fat_box)}"
 
-            # Now edit that logged on-bike entry from 80g -> 140g (+60g) and verify remaining carbs drops by 60g
+            # Edit that logged on-bike entry from 80g -> 140g (+60g C) and verify remaining carbs drops by 60g
+            after_80_c = parse_left(carbs_box)
             page.get_by_role("button", name="Edit actual ride fuel").click()
             ob_carbs = page.get_by_label("Actual Carbs (g)")
             clear_and_verify_empty(ob_carbs, "Edit On-Bike Carbs input")
             ob_carbs.type("140")
             page.get_by_role("button", name="Save Actual Ride Fuel").click()
+            assert parse_left(carbs_box) == after_80_c - 60
 
-            after_140_text = carbs_box.inner_text()
-            after_140_left = int(after_140_text.split("g left")[0].split("\n")[-1].strip())
-            assert after_140_left == after_80_left - 60, f"Expected {after_80_left - 60}g left after editing to 140g, got {after_140_left}"
-
-            # Complete ride kJ + actual on-bike carbs override
+            # Complete ride kJ + actual on-bike carbs/protein/fat + barcode scan button
             page.get_by_role("button", name="Complete").click()
             kj_inp = page.get_by_label("Actual Power Work (kJ)")
             clear_and_verify_empty(kj_inp, "Actual kJ input")
             kj_inp.type("1750")
-            ride_carbs_inp = page.get_by_label("Actual On-Bike Carbs Consumed (g)")
+            ride_carbs_inp = page.get_by_label("Actual Ride Carbs (g)")
             clear_and_verify_empty(ride_carbs_inp, "Complete ride on-bike carbs input")
             ride_carbs_inp.type("110")
             page.get_by_role("button", name="Save & Recalculate Remaining Meals").click()
             assert page.get_by_text("1750 kJ").first.is_visible()
             assert page.get_by_text("110 /").first.is_visible()
-            print("PASS 3: Barcode-first flow, save-as-reusable, modifiable actual on-bike carbs + live recalculation, scaler, Work AI, and Complete Ride")
+            print("PASS 3: Barcode-first flow, save-as-reusable, actual ride C/P/F + barcode scan + live recalculation, scaler, Work AI, and Complete Ride")
 
             # 4. Staples tab — Edit Oats & Berries, verify Backspace-to-empty, daily pin & plain labels
             nav.get_by_role("button", name="Staples").click()
