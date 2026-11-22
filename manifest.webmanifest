@@ -1,0 +1,19 @@
+{
+  "name": "VeloFuel — Smart Cycling Nutrition",
+  "short_name": "VeloFuel",
+  "description": "Smart cycling nutrition with Intervals.icu + Withings sync, auto-scaled home staple meals, and work-meal estimation.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#F5F3EE",
+  "theme_color": "#14181C",
+  "icons": [
+    {
+      "src": "./icon-512.jpg",
+      "sizes": "512x512",
+      "type": "image/jpeg",
+      "purpose": "any maskable"
+    }
+  ]
+}
