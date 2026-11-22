@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Plus, Scale, Trash2, Check, Pencil, X } from 'lucide-react';
 import { computeStapleNutrition, scaleStapleToTargets } from '../engine/fuelingEngine';
 import FoodPickerPanel from './FoodPickerPanel';
+import NumericInput from './NumericInput';
 
 const MEAL_SLOTS = [
   { id: 'breakfast', label: 'Breakfast' },
@@ -10,14 +11,14 @@ const MEAL_SLOTS = [
   { id: 'dinner', label: 'Dinner' },
 ];
 
-const ROLE_CYCLE = {
-  fixed: { next: 'carb', label: 'Fixed', color: 'var(--ink-secondary)', bg: 'var(--bg-subtle)' },
-  carb: { next: 'protein', label: 'Scales Carbs ↕', color: 'var(--code-high)', bg: 'var(--code-high-bg)' },
-  protein: { next: 'fixed', label: 'Scales Protein ↕', color: 'var(--macro-protein)', bg: 'rgba(37,94,138,0.12)' },
-};
+const PORTION_MODES = [
+  { value: 'fixed', label: 'Keep same amount' },
+  { value: 'carb', label: 'Auto-adjust for ride (Carbs)' },
+  { value: 'protein', label: 'Auto-adjust for muscle (Protein)' },
+];
 
 export default function StaplesView({ staples, onSaveStaple, onDeleteStaple }) {
-  const [editor, setEditor] = useState(null); // null or { id, name, mealTypes, prepNote, ingredients }
+  const [editor, setEditor] = useState(null);
 
   const openNew = () => {
     setEditor({
@@ -71,12 +72,21 @@ export default function StaplesView({ staples, onSaveStaple, onDeleteStaple }) {
   const handleSave = (e) => {
     e.preventDefault();
     if (!editor || !editor.name.trim() || editor.ingredients.length === 0) return;
+    const sanitized = editor.ingredients.map((i) => {
+      const g = Math.max(1, Number(i.grams) || 50);
+      return {
+        ...i,
+        grams: g,
+        minGrams: Math.max(5, Math.round((g * 0.4) / 5) * 5),
+        maxGrams: Math.max(g + 80, Math.round((g * 2.2) / 5) * 5),
+      };
+    });
     onSaveStaple({
       id: editor.id,
       name: editor.name.trim(),
       mealTypes: editor.mealTypes,
-      prepNote: editor.prepNote.trim() || `${editor.ingredients.length} ingredients — scales automatically to your day.`,
-      ingredients: editor.ingredients,
+      prepNote: editor.prepNote.trim() || `${sanitized.length} ingredients — adjusts automatically to your rides.`,
+      ingredients: sanitized,
     });
     setEditor(null);
   };
@@ -90,8 +100,8 @@ export default function StaplesView({ staples, onSaveStaple, onDeleteStaple }) {
           <div>
             <h1 className="section-title" style={{ fontSize: '1.08rem' }}>Your Home Staple Menu</h1>
             <p className="muted-text" style={{ marginTop: 3 }}>
-              Build your real meals freely — just Oats &amp; Berries, or a full dinner. Search whole foods,{' '}
-              <strong>scan barcodes</strong>, or write custom items, and choose which ingredients scale with your rides.
+              Build the exact meals you eat at home — whether it&apos;s just Oats &amp; Berries or a full dinner. Search
+              foods, <strong>scan barcodes</strong>, or write custom items freely.
             </p>
           </div>
         </div>
@@ -161,8 +171,8 @@ export default function StaplesView({ staples, onSaveStaple, onDeleteStaple }) {
 
             {/* Current Ingredients in this Meal */}
             <div style={{ marginBottom: 12 }}>
-              <div className="section-header" style={{ marginBottom: 6 }}>
-                <span style={{ fontSize: '0.76rem', fontWeight: 800 }}>
+              <div className="section-header" style={{ marginBottom: 4 }}>
+                <span style={{ fontSize: '0.78rem', fontWeight: 800 }}>
                   Ingredients ({editor.ingredients.length})
                 </span>
                 {editorTotals && editor.ingredients.length > 0 && (
@@ -172,28 +182,37 @@ export default function StaplesView({ staples, onSaveStaple, onDeleteStaple }) {
                 )}
               </div>
 
+              <p className="muted-text" style={{ fontSize: '0.73rem', marginBottom: 8 }}>
+                Enter your normal portion in grams. Set your main carb (like oats or rice) to{' '}
+                <strong>Auto-adjust for ride</strong> so VeloFuel gives you more on hard ride days and less on rest days.
+              </p>
+
               {editor.ingredients.length === 0 ? (
                 <div className="notice-strip slate" style={{ fontSize: '0.76rem' }}>
                   No ingredients yet — search below, scan a barcode, or write a custom food to add what you eat.
                 </div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
-                  {editor.ingredients.map((ing) => {
-                    const roleMeta = ROLE_CYCLE[ing.role] || ROLE_CYCLE.fixed;
-                    return (
-                      <div
-                        key={ing.id}
-                        style={{
-                          background: 'var(--bg-canvas)',
-                          borderRadius: 11,
-                          padding: '9px 10px',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: 6,
-                        }}
-                      >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-                          <span style={{ fontWeight: 700, fontSize: '0.82rem' }}>{ing.name}</span>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {editor.ingredients.map((ing) => (
+                    <div
+                      key={ing.id}
+                      style={{
+                        background: 'var(--bg-canvas)',
+                        borderRadius: 11,
+                        padding: '10px 11px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 7,
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontWeight: 700, fontSize: '0.83rem' }}>{ing.name}</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span className="mono" style={{ fontSize: '0.7rem', color: 'var(--ink-muted)' }}>
+                            {Math.round(((ing.per100g?.carbs || 0) * (Number(ing.grams) || 0)) / 100)}C ·{' '}
+                            {Math.round(((ing.per100g?.protein || 0) * (Number(ing.grams) || 0)) / 100)}P ·{' '}
+                            {Math.round(((ing.per100g?.fat || 0) * (Number(ing.grams) || 0)) / 100)}F
+                          </span>
                           <button
                             type="button"
                             className="icon-btn"
@@ -203,70 +222,54 @@ export default function StaplesView({ staples, onSaveStaple, onDeleteStaple }) {
                             <Trash2 size={14} />
                           </button>
                         </div>
-
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                            <input
-                              type="number"
-                              min={1}
-                              max={1500}
-                              step={5}
-                              className="input mono"
-                              style={{ width: 78, padding: '5px 8px', fontSize: '0.8rem' }}
-                              value={ing.grams}
-                              onChange={(e) => {
-                                const g = Math.max(1, Number(e.target.value) || 0);
-                                updateIngredient(ing.id, {
-                                  grams: g,
-                                  minGrams: Math.max(5, Math.round((g * 0.4) / 5) * 5),
-                                  maxGrams: Math.max(g + 80, Math.round((g * 2.2) / 5) * 5),
-                                });
-                              }}
-                            />
-                            <span style={{ fontSize: '0.74rem', color: 'var(--ink-muted)' }}>g</span>
-                          </div>
-
-                          <button
-                            type="button"
-                            onClick={() => updateIngredient(ing.id, { role: roleMeta.next })}
-                            style={{
-                              border: 'none',
-                              borderRadius: 999,
-                              padding: '4px 10px',
-                              fontSize: '0.7rem',
-                              fontWeight: 800,
-                              cursor: 'pointer',
-                              background: roleMeta.bg,
-                              color: roleMeta.color,
-                            }}
-                            title="Tap to change whether this ingredient auto-scales on hard vs rest days"
-                          >
-                            {roleMeta.label}
-                          </button>
-
-                          <span className="mono" style={{ fontSize: '0.7rem', color: 'var(--ink-muted)', marginLeft: 'auto' }}>
-                            {Math.round((ing.per100g.carbs * ing.grams) / 100)}C ·{' '}
-                            {Math.round((ing.per100g.protein * ing.grams) / 100)}P ·{' '}
-                            {Math.round((ing.per100g.fat * ing.grams) / 100)}F
-                          </span>
-                        </div>
                       </div>
-                    );
-                  })}
-                  <div className="muted-text" style={{ fontSize: '0.71rem' }}>
-                    Tip: Tap any badge (<strong>Fixed</strong> / <strong>Scales Carbs ↕</strong> /{' '}
-                    <strong>Scales Protein ↕</strong>) to choose which ingredients adjust automatically for your ride.
-                  </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                          <NumericInput
+                            aria-label={`${ing.name} grams`}
+                            className="input mono"
+                            style={{ width: 74, padding: '6px 8px', fontSize: '0.82rem', background: 'var(--bg-surface)' }}
+                            value={ing.grams}
+                            min={1}
+                            max={1500}
+                            fallback={50}
+                            onChange={(val) =>
+                              updateIngredient(ing.id, {
+                                grams: val,
+                                minGrams: Math.max(5, Math.round((val * 0.4) / 5) * 5),
+                                maxGrams: Math.max(val + 80, Math.round((val * 2.2) / 5) * 5),
+                              })
+                            }
+                          />
+                          <span style={{ fontSize: '0.74rem', color: 'var(--ink-muted)', fontWeight: 600 }}>g</span>
+                        </div>
+
+                        <select
+                          aria-label={`${ing.name} portion behavior`}
+                          className="select"
+                          style={{ padding: '6px 8px', fontSize: '0.76rem', background: 'var(--bg-surface)', flex: 1 }}
+                          value={ing.role || 'fixed'}
+                          onChange={(e) => updateIngredient(ing.id, { role: e.target.value })}
+                        >
+                          {PORTION_MODES.map((m) => (
+                            <option key={m.value} value={m.value}>
+                              {m.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
 
             <div className="divider" />
 
-            {/* Add Ingredients via Search / Barcode / Custom */}
             <div style={{ marginBottom: 14 }}>
               <div style={{ fontSize: '0.76rem', fontWeight: 800, marginBottom: 8 }}>
-                Add Ingredient (Search · Barcode · Custom)
+                Add Ingredient (Search · Scan Barcode · Custom)
               </div>
               <FoodPickerPanel onAddIngredient={addIngredient} buttonLabel="Add" />
             </div>
@@ -288,6 +291,7 @@ export default function StaplesView({ staples, onSaveStaple, onDeleteStaple }) {
         const modScale = scaleStapleToTargets(staple, 85, 40);
         const highScale = scaleStapleToTargets(staple, 125, 40);
         const primaryCarb = (staple.ingredients || []).find((i) => i.role === 'carb');
+        const primaryProt = (staple.ingredients || []).find((i) => i.role === 'protein');
 
         return (
           <article className="card" key={staple.id}>
@@ -295,7 +299,7 @@ export default function StaplesView({ staples, onSaveStaple, onDeleteStaple }) {
               <div style={{ minWidth: 0 }}>
                 <h2 className="session-title">{staple.name}</h2>
                 <div className="muted-text" style={{ marginTop: 3, fontSize: '0.75rem' }}>
-                  {(staple.ingredients || []).map((i) => i.name).join(' · ')}
+                  {(staple.ingredients || []).map((i) => `${i.grams}g ${i.name}`).join(' · ')}
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
@@ -322,29 +326,23 @@ export default function StaplesView({ staples, onSaveStaple, onDeleteStaple }) {
 
             <div style={{ marginTop: 8, fontSize: '0.73rem', color: 'var(--ink-secondary)' }}>
               <Scale size={12} style={{ verticalAlign: '-2px', marginRight: 5, color: 'var(--code-high)' }} />
-              {primaryCarb ? (
+              {primaryCarb || primaryProt ? (
                 <>
-                  Auto-scales <strong>{primaryCarb.name}</strong>
-                  {(staple.ingredients || []).some((i) => i.role === 'protein') && (
-                    <>
-                      {' '}
-                      +{' '}
-                      <strong>
-                        {(staple.ingredients || []).find((i) => i.role === 'protein')?.name}
-                      </strong>
-                    </>
-                  )}
+                  Portion adjusts automatically for your ride:{' '}
+                  <strong>
+                    {[primaryCarb?.name, primaryProt?.name].filter(Boolean).join(' + ')}
+                  </strong>
                 </>
               ) : (
-                <>Fixed portion meal (tap Edit to let any carb or protein item auto-scale)</>
+                <>Always keeps the same portion sizes (tap Edit to let an ingredient adjust with rides)</>
               )}
             </div>
 
             <div className="staple-preview-grid">
               {[
-                ['REST', 'low', restScale],
-                ['MED', 'med', modScale],
-                ['HIGH', 'high', highScale],
+                ['REST DAY', 'low', restScale],
+                ['MED DAY', 'med', modScale],
+                ['HARD DAY', 'high', highScale],
               ].map(([lbl, cls, sc]) => {
                 const carbVal = primaryCarb ? sc.gramsById[primaryCarb.id] : null;
                 return (

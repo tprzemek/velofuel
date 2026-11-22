@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { RefreshCw, UploadCloud, Sparkles, Download, Upload, CheckCircle2, AlertCircle, User } from 'lucide-react';
 import { sumDailyLogs } from '../engine/fuelingEngine';
 import { pushWellnessDirect, syncIntervalsDirect } from '../engine/intervalsClient';
+import NumericInput from './NumericInput';
 
 export default function SyncView({
   profile,
@@ -36,21 +37,27 @@ export default function SyncView({
       daysBack: 28,
       daysForward: 7,
     };
+    const hasLocalNodeApi = window.location.port === '3001' || window.location.port === '5173';
     try {
-      let data;
-      try {
-        const resp = await fetch('./api/intervals/sync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        const ct = resp.headers.get('content-type') || '';
-        if (!ct.includes('application/json')) throw new Error('no-backend');
-        data = await resp.json();
-        if (!resp.ok || !data.ok) throw new Error(data.error || 'Intervals.icu sync failed');
-      } catch (backendErr) {
-        if (backendErr.message && backendErr.message.includes('rejected')) throw backendErr;
-        // Direct browser-to-Intervals.icu sync (works on GitHub Pages / static HTTPS!)
+      let data = null;
+      if (hasLocalNodeApi) {
+        try {
+          const resp = await fetch('./api/intervals/sync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          const ct = resp.headers.get('content-type') || '';
+          if (ct.includes('application/json')) {
+            const parsed = await resp.json();
+            if (!resp.ok || !parsed.ok) throw new Error(parsed.error || 'Intervals.icu sync failed');
+            data = parsed;
+          }
+        } catch (backendErr) {
+          if (backendErr.message && backendErr.message.includes('rejected')) throw backendErr;
+        }
+      }
+      if (!data) {
         data = await syncIntervalsDirect(payload);
       }
       onApplyIntervalsSync(data);
@@ -79,18 +86,23 @@ export default function SyncView({
       fat: totals.fat,
     };
     setPushing(true);
+    const hasLocalNodeApi = window.location.port === '3001' || window.location.port === '5173';
     try {
-      try {
-        const resp = await fetch('./api/intervals/wellness-push', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        const ct = resp.headers.get('content-type') || '';
-        if (!ct.includes('application/json')) throw new Error('no-backend');
-        const data = await resp.json();
-        if (!resp.ok || !data.ok) throw new Error(data.error || 'Push failed');
-      } catch {
+      let pushed = false;
+      if (hasLocalNodeApi) {
+        try {
+          const resp = await fetch('./api/intervals/wellness-push', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          const ct = resp.headers.get('content-type') || '';
+          if (resp.ok && ct.includes('application/json')) pushed = true;
+        } catch {
+          // fall through to direct browser push
+        }
+      }
+      if (!pushed) {
         await pushWellnessDirect(payload);
       }
       showToast(`Pushed ${totals.kcal} kcal & ${totals.carbs}g carbs to Intervals.icu (${todayDate})`);
@@ -259,32 +271,38 @@ export default function SyncView({
         <div className="field-grid">
           <div className="field">
             <label htmlFor="prof-ftp">FTP (Watts)</label>
-            <input
+            <NumericInput
               id="prof-ftp"
-              type="number"
+              min={80}
+              max={600}
+              fallback={250}
               className="input mono"
               value={profile.ftp}
-              onChange={(e) => onUpdateProfile({ ftp: Number(e.target.value) || 250 })}
+              onChange={(val) => onUpdateProfile({ ftp: val })}
             />
           </div>
           <div className="field">
             <label htmlFor="prof-height">Height (cm)</label>
-            <input
+            <NumericInput
               id="prof-height"
-              type="number"
+              min={130}
+              max={230}
+              fallback={175}
               className="input mono"
               value={profile.heightCm}
-              onChange={(e) => onUpdateProfile({ heightCm: Number(e.target.value) || 175 })}
+              onChange={(val) => onUpdateProfile({ heightCm: val })}
             />
           </div>
           <div className="field">
             <label htmlFor="prof-age">Age</label>
-            <input
+            <NumericInput
               id="prof-age"
-              type="number"
+              min={14}
+              max={95}
+              fallback={30}
               className="input mono"
               value={profile.age}
-              onChange={(e) => onUpdateProfile({ age: Number(e.target.value) || 30 })}
+              onChange={(val) => onUpdateProfile({ age: val })}
             />
           </div>
           <div className="field">
@@ -314,28 +332,28 @@ export default function SyncView({
           </div>
           <div className="field">
             <label htmlFor="prof-prot">Cut Protein (g/kg)</label>
-            <input
+            <NumericInput
               id="prof-prot"
-              type="number"
-              step="0.1"
-              min="1.6"
-              max="2.4"
+              step={0.1}
+              min={1.4}
+              max={2.5}
+              fallback={2.0}
               className="input mono"
               value={profile.proteinGPerKgCut}
-              onChange={(e) => onUpdateProfile({ proteinGPerKgCut: Number(e.target.value) || 2.0 })}
+              onChange={(val) => onUpdateProfile({ proteinGPerKgCut: val })}
             />
           </div>
           <div className="field">
             <label htmlFor="prof-ge">Riding Efficiency (%)</label>
-            <input
+            <NumericInput
               id="prof-ge"
-              type="number"
-              step="0.5"
-              min="18"
-              max="25"
+              step={0.5}
+              min={18}
+              max={25}
+              fallback={22}
               className="input mono"
               value={profile.grossEfficiencyPct ?? 22}
-              onChange={(e) => onUpdateProfile({ grossEfficiencyPct: Number(e.target.value) || 22 })}
+              onChange={(val) => onUpdateProfile({ grossEfficiencyPct: val })}
             />
           </div>
           <div className="field">

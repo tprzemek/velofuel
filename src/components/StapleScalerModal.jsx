@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Scale, Check, X, Sparkles } from 'lucide-react';
 import { computeStapleNutrition, scaleStapleToTargets } from '../engine/fuelingEngine';
+import NumericInput from './NumericInput';
 
 export default function StapleScalerModal({
   isOpen,
@@ -204,15 +205,15 @@ export default function StapleScalerModal({
                       )}
                     </span>
                     <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                      <input
-                        type="number"
+                      <NumericInput
+                        aria-label={`${ing.name} grams`}
                         min={0}
                         max={1500}
-                        step={5}
+                        fallback={0}
                         className="input mono"
                         style={{ width: 66, padding: '3px 6px', fontSize: '0.82rem', fontWeight: 700, color: accent }}
                         value={g}
-                        onChange={(e) => setIngredientGrams(ing.id, e.target.value)}
+                        onChange={(val) => setIngredientGrams(ing.id, val)}
                       />
                       <span style={{ fontSize: '0.72rem', color: 'var(--ink-muted)' }}>g</span>
                     </div>

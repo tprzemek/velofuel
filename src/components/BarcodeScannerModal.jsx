@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { Camera, Search, X, Check, AlertCircle } from 'lucide-react';
 import { lookupBarcode } from '../engine/foodDatabase';
+import NumericInput from './NumericInput';
 
 export default function BarcodeScannerModal({ isOpen, onClose, onSelectFood }) {
   const readerId = useId().replace(/:/g, '');
@@ -147,24 +148,29 @@ export default function BarcodeScannerModal({ isOpen, onClose, onSelectFood }) {
           </div>
         )}
 
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (manualCode.trim()) handleLookup(manualCode.trim());
-          }}
-          style={{ display: 'flex', gap: 8, marginBottom: 12 }}
-        >
+        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
           <input
             className="input mono"
             placeholder="Or type barcode digits (e.g. 3168930003632)"
             value={manualCode}
             onChange={(e) => setManualCode(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                if (manualCode.trim()) handleLookup(manualCode.trim());
+              }
+            }}
             inputMode="numeric"
           />
-          <button type="submit" className="btn btn-primary" disabled={loading || !manualCode.trim()}>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={loading || !manualCode.trim()}
+            onClick={() => manualCode.trim() && handleLookup(manualCode.trim())}
+          >
             <Search size={15} /> {loading ? '…' : 'Look up'}
           </button>
-        </form>
+        </div>
 
         {lookupError && (
           <div className="notice-strip" style={{ marginBottom: 10 }}>
@@ -183,23 +189,22 @@ export default function BarcodeScannerModal({ isOpen, onClose, onSelectFood }) {
             <div className="field-grid" style={{ marginTop: 10 }}>
               <div className="field">
                 <label htmlFor="bc-grams">Amount (g)</label>
-                <input
+                <NumericInput
                   id="bc-grams"
-                  type="number"
-                  min={5}
-                  max={1000}
-                  step={5}
+                  min={1}
+                  max={1500}
+                  fallback={100}
                   className="input mono"
                   value={grams}
-                  onChange={(e) => setGrams(Number(e.target.value) || 0)}
+                  onChange={(val) => setGrams(val)}
                 />
               </div>
               <div className="field">
-                <label htmlFor="bc-role">Auto-Scale Role</label>
+                <label htmlFor="bc-role">Portion Behavior</label>
                 <select id="bc-role" className="select" value={role} onChange={(e) => setRole(e.target.value)}>
-                  <option value="fixed">Fixed amount</option>
-                  <option value="carb">Scales Carbs (Rest ↔ Hard)</option>
-                  <option value="protein">Scales Protein</option>
+                  <option value="fixed">Keep same amount</option>
+                  <option value="carb">Auto-adjust for ride (Carbs)</option>
+                  <option value="protein">Auto-adjust for muscle (Protein)</option>
                 </select>
               </div>
             </div>

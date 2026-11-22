@@ -79,37 +79,42 @@ export default function WorkMealModal({
     setWarning('');
     try {
       let result = null;
-      try {
-        const resp = await fetch('./api/estimate-meal', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            text: queryText,
-            imageBase64: photoDataUrl || '',
-            imageMimeType: photoMime,
-            contextHint: 'work cafeteria meal',
-            aiProvider: aiConfig?.provider || 'auto',
-            aiApiKey: aiConfig?.apiKey || '',
-          }),
-        });
-        const ct = resp.headers.get('content-type') || '';
-        if (!ct.includes('application/json')) throw new Error('no-backend');
-        const data = await resp.json();
-        if (!resp.ok || !data.ok) throw new Error(data.error || 'Could not estimate meal');
-        result = data.estimate;
-        if (data.warning) setWarning(data.warning);
-      } catch {
-        // Static HTTPS / GitHub Pages mode: call Gemini Vision directly if user supplied a Gemini key, else run on-device USDA estimator
-        if (aiConfig?.apiKey?.trim() && (aiConfig.provider === 'gemini' || aiConfig.provider === 'auto')) {
-          try {
-            result = await estimateWithGeminiDirect(aiConfig.apiKey.trim(), queryText, photoDataUrl, photoMime);
-          } catch (aiErr) {
-            setWarning(`Vision AI error (${aiErr.message}) — used built-in food estimator instead.`);
+      const hasLocalNodeApi = window.location.port === '3001' || window.location.port === '5173';
+      if (hasLocalNodeApi) {
+        try {
+          const resp = await fetch('./api/estimate-meal', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              text: queryText,
+              imageBase64: photoDataUrl || '',
+              imageMimeType: photoMime,
+              contextHint: 'work cafeteria meal',
+              aiProvider: aiConfig?.provider || 'auto',
+              aiApiKey: aiConfig?.apiKey || '',
+            }),
+          });
+          const ct = resp.headers.get('content-type') || '';
+          if (resp.ok && ct.includes('application/json')) {
+            const data = await resp.json();
+            if (data.ok) {
+              result = data.estimate;
+              if (data.warning) setWarning(data.warning);
+            }
           }
+        } catch {
+          // fall through to direct browser estimation
         }
-        if (!result) {
-          result = estimateMealLocally(queryText, Boolean(photoDataUrl), 'work cafeteria meal');
+      }
+      if (!result && aiConfig?.apiKey?.trim() && (aiConfig.provider === 'gemini' || aiConfig.provider === 'auto')) {
+        try {
+          result = await estimateWithGeminiDirect(aiConfig.apiKey.trim(), queryText, photoDataUrl, photoMime);
+        } catch (aiErr) {
+          setWarning(`Vision AI error (${aiErr.message}) — used built-in food estimator instead.`);
         }
+      }
+      if (!result) {
+        result = estimateMealLocally(queryText, Boolean(photoDataUrl), 'work cafeteria meal');
       }
       setEstimate(result);
       setPortionScale(1.0);

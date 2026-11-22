@@ -135,10 +135,9 @@ export default function FoodPickerPanel({ onAddIngredient, buttonLabel = 'Add' }
         </button>
       </div>
 
-      {/* Free-form Custom Food entry */}
+      {/* Free-form Custom Food entry (div, not form, so it never nests inside parent meal forms) */}
       {showCustom && (
-        <form
-          onSubmit={handleAddCustom}
+        <div
           className="card"
           style={{ background: 'var(--bg-canvas)', boxShadow: 'none', padding: 12 }}
         >
@@ -154,7 +153,6 @@ export default function FoodPickerPanel({ onAddIngredient, buttonLabel = 'Add' }
                 placeholder="e.g., My local bakery rye bread"
                 value={customName}
                 onChange={(e) => setCustomName(e.target.value)}
-                required
               />
             </div>
             <div className="field">
@@ -170,16 +168,16 @@ export default function FoodPickerPanel({ onAddIngredient, buttonLabel = 'Add' }
               />
             </div>
             <div className="field">
-              <label htmlFor="cf-role">Auto-Scale</label>
+              <label htmlFor="cf-role">Portion Behavior</label>
               <select
                 id="cf-role"
                 className="select"
                 value={customRole}
                 onChange={(e) => setCustomRole(e.target.value)}
               >
-                <option value="fixed">Fixed amount</option>
-                <option value="carb">Scales Carbs</option>
-                <option value="protein">Scales Protein</option>
+                <option value="fixed">Keep same amount</option>
+                <option value="carb">Auto-adjust for ride (Carbs)</option>
+                <option value="protein">Auto-adjust for muscle (Protein)</option>
               </select>
             </div>
             <div className="field">
@@ -219,10 +217,16 @@ export default function FoodPickerPanel({ onAddIngredient, buttonLabel = 'Add' }
               />
             </div>
           </div>
-          <button type="submit" className="btn btn-primary btn-sm btn-block" style={{ marginTop: 10 }}>
+          <button
+            type="button"
+            className="btn btn-primary btn-sm btn-block"
+            style={{ marginTop: 10 }}
+            disabled={!customName.trim()}
+            onClick={handleAddCustom}
+          >
             <Check size={14} /> Add Custom Food
           </button>
-        </form>
+        </div>
       )}
 
       {/* Online Open Food Facts packaged results */}
