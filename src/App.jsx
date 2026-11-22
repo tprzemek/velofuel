@@ -35,7 +35,7 @@ import QuickFoodModal from './components/QuickFoodModal';
 import SupplementsModal from './components/SupplementsModal';
 
 const STORAGE_KEY = 'velofuel_state_v1';
-const AUTO_SYNC_INTERVAL_MS = 10 * 60 * 1000;
+const AUTO_SYNC_INTERVAL_MS = 2 * 60 * 1000;
 
 function loadInitialState() {
   try {
@@ -201,9 +201,34 @@ export default function App() {
             sessMap.set(s.date, { ...s, bottleSizeMl: existing?.bottleSizeMl });
           }
         });
+        const nextLogsByDate = { ...prev.logsByDate };
         (syncData.completedSessions || []).forEach((s) => {
           const existing = sessMap.get(s.date);
           sessMap.set(s.date, { ...s, bottleSizeMl: existing?.bottleSizeMl });
+          // If the completed ride from Intervals.icu recorded actual carbs_ingested and user hasn't logged on-bike fuel yet, auto-log it
+          if (s.carbsIngested > 0) {
+            const dayLogs = nextLogsByDate[s.date] || [];
+            const alreadyLoggedOnBike = dayLogs.some((l) => l.slot === 'on_bike');
+            if (!alreadyLoggedOnBike) {
+              nextLogsByDate[s.date] = [
+                ...dayLogs,
+                {
+                  id: `log-bike-icu-${s.date}`,
+                  slot: 'on_bike',
+                  type: 'on_bike',
+                  title: 'Actual Ride Fuel (from Intervals.icu)',
+                  detail: `${s.carbsIngested}g carbs synced from completed ride`,
+                  carbs: s.carbsIngested,
+                  protein: 0,
+                  fat: 0,
+                  kcal: s.carbsIngested * 4,
+                  uncertaintyPct: 0,
+                  micros: { fiber: 0, iron: 0, vitC: 0, calcium: 0, vitD: 0, magnesium: 0, sodium: 0 },
+                  loggedAt: 'Auto',
+                },
+              ];
+            }
+          }
         });
         const nextProfile = syncData.profilePatch
           ? { ...prev.profile, ...syncData.profilePatch }
@@ -212,6 +237,7 @@ export default function App() {
           ...prev,
           profile: nextProfile,
           sessions: Array.from(sessMap.values()),
+          logsByDate: nextLogsByDate,
         };
       });
     },
@@ -351,6 +377,7 @@ export default function App() {
       type: 'on_bike',
       title: `On-Bike Mix & Gels (${onBikePlan.carbsPerHour}g/hr)`,
       detail: `${onBikePlan.bottles}× ${onBikePlan.bottleLabel} · ${onBikePlan.totalSodiumMg}mg sodium`,
+      bottles: onBikePlan.bottles,
       carbs: onBikePlan.totalCarbs,
       protein: 0,
       fat: 0,
@@ -359,6 +386,63 @@ export default function App() {
       micros: { fiber: 0, iron: 0, vitC: 0, calcium: 20, vitD: 0, magnesium: 30, sodium: onBikePlan.totalSodiumMg },
       loggedAt: new Date().toTimeString().slice(0, 5),
     });
+  };
+
+  const handleSaveOnBikeLog = ({
+    existingId,
+    carbs,
+    sodiumMg,
+    bottles,
+    bottleLabel,
+    durationMin,
+    plannedCarbs,
+    silent = false,
+  }) => {
+    const hrs = Math.max(0.25, (Number(durationMin) || 60) / 60);
+    const rate = Math.round(carbs / hrs);
+    const diff = carbs - (plannedCarbs || 0);
+    const diffNote =
+      diff === 0 ? 'on plan' : diff > 0 ? `+${diff}g vs plan` : `${diff}g vs plan`;
+    const entry = {
+      id: existingId || `log-bike-${Date.now()}`,
+      slot: 'on_bike',
+      type: 'on_bike',
+      title: `Actual Ride Fuel (${rate}g/hr)`,
+      detail: `${bottles}× ${bottleLabel} · ${sodiumMg}mg sodium · ${diffNote}`,
+      bottles,
+      carbs,
+      protein: 0,
+      fat: 0,
+      kcal: carbs * 4,
+      uncertaintyPct: 0,
+      micros: { fiber: 0, iron: 0, vitC: 0, calcium: 15, vitD: 0, magnesium: 25, sodium: sodiumMg },
+      loggedAt: new Date().toTimeString().slice(0, 5),
+    };
+
+    setState((prev) => {
+      const dayLogs = prev.logsByDate[selectedDate] || [];
+      const exists = existingId && dayLogs.some((l) => l.id === existingId);
+      const nextDayLogs = exists
+        ? dayLogs.map((l) => (l.id === existingId ? entry : l))
+        : [...dayLogs, entry];
+      return {
+        ...prev,
+        logsByDate: {
+          ...prev.logsByDate,
+          [selectedDate]: nextDayLogs,
+        },
+      };
+    });
+
+    if (!silent) {
+      showToast(
+        diff < 0
+          ? `Saved ${carbs}g actual ride carbs — +${Math.abs(diff)}g added to remaining meals today.`
+          : diff > 0
+          ? `Saved ${carbs}g actual ride carbs — remaining meals trimmed by ${diff}g.`
+          : `Saved ${carbs}g actual ride carbs (matches plan).`
+      );
+    }
   };
 
   const handleQuickLogStaple = (slot, staple) => {
@@ -671,6 +755,9 @@ export default function App() {
             staples={state.staples}
             supplements={state.supplements}
             biometricsSummary={biometricsSummary}
+            hasIntervalsConnected={Boolean(state.intervalsConfig.apiKey?.trim())}
+            bgSyncing={bgSyncing}
+            onResyncNow={() => runBackgroundSync(true)}
             onOpenStapleModal={(slotInfo, remaining) => setStapleModal({ open: true, slotInfo, remaining })}
             onOpenQuickFoodModal={(slotInfo) => setQuickFoodModal({ open: true, slotInfo })}
             onOpenWorkModal={(slotInfo) => setWorkModal({ open: true, slotInfo })}
@@ -681,6 +768,7 @@ export default function App() {
             onSetRideBottleSize={handleSetRideBottleSize}
             onDeleteLog={handleDeleteLog}
             onLogOnBike={handleLogOnBike}
+            onSaveOnBikeLog={handleSaveOnBikeLog}
             onCompleteRide={handleCompleteRide}
             onNavigateTab={setActiveTab}
           />

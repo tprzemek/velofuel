@@ -433,16 +433,19 @@ function buildMealTimeline({ category, todaySession, needsTomorrowPreload, carbs
     },
   ];
 
-  if (hasRide && onBikeCarbs > 0) {
+  if (hasRide && onBikePlan) {
     const rideSlot = {
       slot: 'on_bike',
       label: 'On-Bike Fuel',
       location: 'During Ride',
-      timeHint: onBikePlan.progressiveRamp || `${onBikePlan.carbsPerHour}g/hr · ${todaySession.durationMin}m`,
+      timeHint:
+        onBikeCarbs > 0
+          ? onBikePlan.progressiveRamp || `${onBikePlan.carbsPerHour}g/hr · ${todaySession.durationMin}m`
+          : `Water + electrolytes · ${todaySession.durationMin}m`,
       targetCarbs: onBikeCarbs,
       targetProtein: 0,
       targetFat: 0,
-      carbCode: onBikePlan.carbsPerHour >= 70 ? 'HIGH' : 'MED',
+      carbCode: onBikePlan.carbsPerHour >= 70 ? 'HIGH' : onBikeCarbs > 0 ? 'MED' : 'LOW',
       targetKcal: onBikeCarbs * 4,
     };
     const insertIdx = timing === 'morning' ? 1 : timing === 'midday' ? 2 : 3;

@@ -110,14 +110,44 @@ def run_qa():
             page.get_by_role("dialog", name="Estimate Work Meal").locator(".chip").first.click()
             page.get_by_role("button", name="Log Work Meal & Auto-Adjust Evening Dinner").click()
 
-            # Complete ride kJ override
+            # Modify Actual On-Bike Carbs (less than prescribed -> verify remaining day carbs recalculates!)
+            carbs_box = page.locator(".macro-bar-box").first
+            before_text = carbs_box.inner_text()
+            before_left = int(before_text.split("g left")[0].split("\n")[-1].strip())
+
+            page.get_by_role("button", name="Log Actual / Tweak").click()
+            ob_carbs = page.get_by_label("Actual Carbs (g)")
+            clear_and_verify_empty(ob_carbs, "Actual On-Bike Carbs input")
+            ob_carbs.type("80")
+            page.get_by_role("button", name="Save Actual Ride Fuel").click()
+
+            after_80_text = carbs_box.inner_text()
+            after_80_left = int(after_80_text.split("g left")[0].split("\n")[-1].strip())
+            assert after_80_left == before_left - 80, f"Expected {before_left - 80}g left after 80g ride carbs, got {after_80_left}"
+
+            # Now edit that logged on-bike entry from 80g -> 140g (+60g) and verify remaining carbs drops by 60g
+            page.get_by_role("button", name="Edit actual ride fuel").click()
+            ob_carbs = page.get_by_label("Actual Carbs (g)")
+            clear_and_verify_empty(ob_carbs, "Edit On-Bike Carbs input")
+            ob_carbs.type("140")
+            page.get_by_role("button", name="Save Actual Ride Fuel").click()
+
+            after_140_text = carbs_box.inner_text()
+            after_140_left = int(after_140_text.split("g left")[0].split("\n")[-1].strip())
+            assert after_140_left == after_80_left - 60, f"Expected {after_80_left - 60}g left after editing to 140g, got {after_140_left}"
+
+            # Complete ride kJ + actual on-bike carbs override
             page.get_by_role("button", name="Complete").click()
             kj_inp = page.get_by_label("Actual Power Work (kJ)")
             clear_and_verify_empty(kj_inp, "Actual kJ input")
             kj_inp.type("1750")
+            ride_carbs_inp = page.get_by_label("Actual On-Bike Carbs Consumed (g)")
+            clear_and_verify_empty(ride_carbs_inp, "Complete ride on-bike carbs input")
+            ride_carbs_inp.type("110")
             page.get_by_role("button", name="Save & Recalculate Remaining Meals").click()
             assert page.get_by_text("1750 kJ").first.is_visible()
-            print("PASS 3: Barcode-first flow, save-as-reusable-meal, scaler, Work AI, and Complete Ride")
+            assert page.get_by_text("110 /").first.is_visible()
+            print("PASS 3: Barcode-first flow, save-as-reusable, modifiable actual on-bike carbs + live recalculation, scaler, Work AI, and Complete Ride")
 
             # 4. Staples tab — Edit Oats & Berries, verify Backspace-to-empty, daily pin & plain labels
             nav.get_by_role("button", name="Staples").click()

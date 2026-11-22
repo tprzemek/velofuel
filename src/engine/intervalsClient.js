@@ -132,7 +132,7 @@ export async function syncIntervalsDirect({ athleteId = '0', apiKey, daysBack = 
 
   let stravaRestrictedCount = 0;
 
-  const completedSessions = (Array.isArray(activitiesRaw) ? activitiesRaw : [])
+  const rawCompleted = (Array.isArray(activitiesRaw) ? activitiesRaw : [])
     .filter((a) => {
       if (!a) return false;
       if (a.source === 'STRAVA' && !a.moving_time && !a.icu_joules) {
@@ -143,8 +143,19 @@ export async function syncIntervalsDirect({ athleteId = '0', apiKey, daysBack = 
     })
     .map((a) => {
       const date = String(a.start_date_local || a.start_date || '').slice(0, 10);
-      const durationMin = Math.round((a.moving_time || a.elapsed_time || 0) / 60);
-      const actualKj = a.icu_joules ? Math.round(a.icu_joules / 1000) : a.calories ? Math.round(a.calories) : 0;
+      const movingSecs = Number(a.moving_time || a.elapsed_time || 0);
+      const durationMin = Math.round(movingSecs / 60);
+      const avgWatts = Number(a.icu_average_watts || a.average_watts || 0);
+      const actualKj = a.icu_joules
+        ? Math.round(a.icu_joules / 1000)
+        : a.joules
+        ? Math.round(a.joules / 1000)
+        : avgWatts > 0 && movingSecs > 0
+        ? Math.round((avgWatts * movingSecs) / 1000)
+        : a.calories
+        ? Math.round(a.calories)
+        : 0;
+      const carbsIngested = Number(a.carbs_ingested || 0) > 0 ? Math.round(Number(a.carbs_ingested)) : 0;
       const startHour = Number(String(a.start_date_local || '09:00').slice(11, 13)) || 9;
       return {
         id: `icu-act-${a.id}`,
@@ -156,12 +167,39 @@ export async function syncIntervalsDirect({ athleteId = '0', apiKey, daysBack = 
         intensity: inferIntensity(a),
         actualKj,
         plannedKj: actualKj,
+        carbsIngested,
         tss: Math.round(a.icu_training_load || 0),
         timing: startHour < 11 ? 'morning' : startHour < 15 ? 'midday' : 'evening',
         source: 'intervals.icu',
       };
     })
     .filter((s) => s.date);
+
+  // Aggregate multiple completed rides on the same date so double-ride days keep full kJ & minutes
+  const INTENSITY_RANK = { rest: 0, recovery: 1, endurance: 2, tempo: 3, sweetspot: 4, threshold: 5, vo2max: 6, race: 7 };
+  const completedByDate = new Map();
+  for (const s of rawCompleted) {
+    const existing = completedByDate.get(s.date);
+    if (!existing) {
+      completedByDate.set(s.date, { ...s });
+    } else {
+      const higherIntensity =
+        (INTENSITY_RANK[s.intensity] || 0) >= (INTENSITY_RANK[existing.intensity] || 0)
+          ? s.intensity
+          : existing.intensity;
+      completedByDate.set(s.date, {
+        ...existing,
+        title: `${existing.title} + ${s.title}`,
+        durationMin: existing.durationMin + s.durationMin,
+        actualKj: existing.actualKj + s.actualKj,
+        plannedKj: existing.plannedKj + s.plannedKj,
+        carbsIngested: (existing.carbsIngested || 0) + (s.carbsIngested || 0),
+        tss: existing.tss + s.tss,
+        intensity: higherIntensity,
+      });
+    }
+  }
+  const completedSessions = Array.from(completedByDate.values());
 
   const plannedSessions = (Array.isArray(eventsRaw) ? eventsRaw : [])
     .filter((e) => e && e.start_date_local)
