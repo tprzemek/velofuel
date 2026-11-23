@@ -356,14 +356,25 @@ export async function searchPackagedFoods(query, { usdaApiKey = '' } = {}) {
     return { results: [], sources: [], warning: '' };
   }
 
-  const [usdaRes, offRes] = await Promise.allSettled([
-    searchUsdaFdc(q, usdaApiKey, 10),
-    searchOffV2ByBrand(q),
-  ]);
+  let usdaItems = [];
+  let usdaRateLimited = false;
+  try {
+    const usdaRes = await searchUsdaFdc(q, usdaApiKey, 12);
+    usdaItems = usdaRes.items || [];
+    usdaRateLimited = Boolean(usdaRes.rateLimited);
+  } catch {
+    usdaItems = [];
+  }
 
-  const usdaItems = usdaRes.status === 'fulfilled' ? usdaRes.value.items || [] : [];
-  const usdaRateLimited = usdaRes.status === 'fulfilled' && Boolean(usdaRes.value.rateLimited);
-  const offItems = offRes.status === 'fulfilled' ? offRes.value || [] : [];
+  // Only hit Open Food Facts v2 as a fallback when USDA has < 3 hits or is rate-limited
+  let offItems = [];
+  if (usdaItems.length < 3 || usdaRateLimited) {
+    try {
+      offItems = await searchOffV2ByBrand(q);
+    } catch {
+      offItems = [];
+    }
+  }
 
   const merged = [];
   const seen = new Set();
@@ -375,12 +386,8 @@ export async function searchPackagedFoods(query, { usdaApiKey = '' } = {}) {
     }
   };
 
-  // Interleave USDA (verified + branded) and Open Food Facts for best coverage
-  const maxLen = Math.max(usdaItems.length, offItems.length);
-  for (let i = 0; i < maxLen; i += 1) {
-    if (usdaItems[i]) pushUnique(usdaItems[i]);
-    if (offItems[i]) pushUnique(offItems[i]);
-  }
+  for (const item of usdaItems) pushUnique(item);
+  for (const item of offItems) pushUnique(item);
 
   const sources = [];
   if (usdaItems.length > 0) sources.push('USDA FoodData Central');

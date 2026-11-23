@@ -17,6 +17,43 @@ export const INTENSITY_OPTIONS = Object.entries(INTENSITY_META).map(([value, met
   label: meta.label,
 }));
 
+export const SPORT_OPTIONS = [
+  { value: 'Ride', label: 'Cycling / Ride', kind: 'ride' },
+  { value: 'WeightTraining', label: 'Gym / Strength', kind: 'strength' },
+  { value: 'Run', label: 'Running', kind: 'run' },
+  { value: 'Swim', label: 'Swimming', kind: 'swim' },
+  { value: 'Yoga', label: 'Yoga / Mobility', kind: 'other' },
+  { value: 'Workout', label: 'Other Workout', kind: 'other' },
+  { value: 'Rest', label: 'Rest Day', kind: 'rest' },
+];
+
+export function normalizeSportKind(sport = '', title = '') {
+  const s = String(sport || '').toLowerCase();
+  const t = String(title || '').toLowerCase();
+  if (s === 'rest') return 'rest';
+  if (/ride|cycl|bike|spin|zwift|velomobile|handcycle/.test(s)) return 'ride';
+  if (/weight|strength|gym|crossfit|kettlebell|lift/.test(s) || /\b(gym|strength|weights|lifting|kettlebell|core)\b/.test(t)) {
+    return 'strength';
+  }
+  if (/run|trail|jog/.test(s)) return 'run';
+  if (/swim/.test(s)) return 'swim';
+  if (/yoga|pilates|walk|hike|row|ski|mobility|stretch|other|workout|hiit|elliptical/.test(s)) {
+    return 'other';
+  }
+  // Fallback: default cycling if title mentions ftp/watts/ride/z2, otherwise ride when sport is empty
+  if (!s) return 'ride';
+  return 'other';
+}
+
+export function sportLabelForKind(sportKind, rawSport = '') {
+  if (sportKind === 'ride') return 'Ride';
+  if (sportKind === 'strength') return 'Gym / Strength';
+  if (sportKind === 'run') return 'Run';
+  if (sportKind === 'swim') return 'Swim';
+  if (rawSport && rawSport !== 'Workout') return rawSport;
+  return 'Workout';
+}
+
 export const FUEL_CATEGORY_META = {
   REST: { label: 'Rest & Repair', badge: 'LOW', color: 'low', gPerKgRange: '2.5–3.5 g/kg' },
   LOW: { label: 'Light Fuel', badge: 'LOW', color: 'low', gPerKgRange: '3.5–4.5 g/kg' },
@@ -29,6 +66,8 @@ export const BOTTLE_SIZE_OPTIONS = [500, 550, 650, 750, 950];
 
 export function estimateSessionKj(session, ftp = 290) {
   if (!session || session.intensity === 'rest' || !session.durationMin) return 0;
+  const kind = normalizeSportKind(session.sport, session.title);
+  if (kind !== 'ride') return 0;
   if (session.status === 'completed' && session.actualKj > 0) return Math.round(session.actualKj);
   if (session.plannedKj > 0) return Math.round(session.plannedKj);
   const meta = INTENSITY_META[session.intensity] || INTENSITY_META.endurance;
@@ -44,14 +83,90 @@ export function kjToMetabolicKcal(kj, grossEfficiencyPct = 22.0) {
   return Math.round(kj / (4.184 * clampedGe));
 }
 
+export function estimateSessionBurn(session, profile = {}, weightKg = 74) {
+  if (!session || session.intensity === 'rest' || !session.durationMin) {
+    return { kj: 0, kcal: 0, sportKind: 'rest' };
+  }
+  const sportKind = normalizeSportKind(session.sport, session.title);
+  if (sportKind === 'rest') return { kj: 0, kcal: 0, sportKind: 'rest' };
+
+  const gePct = profile.grossEfficiencyPct || 22.0;
+  const mins = Math.max(0, Number(session.durationMin) || 0);
+  const wFactor = Math.max(0.65, Math.min(1.6, (Number(weightKg) || 74) / 75));
+
+  if (sportKind === 'ride') {
+    const kj = estimateSessionKj(session, profile.ftp || 290);
+    const kcal =
+      kj > 0
+        ? kjToMetabolicKcal(kj, gePct)
+        : Math.round(
+            (session.status === 'completed' && session.actualKcal > 0
+              ? session.actualKcal
+              : session.plannedKcal || mins * 8.5 * wFactor) || 0
+          );
+    return { kj, kcal, sportKind };
+  }
+
+  // Non-ride workouts (Gym/Strength, Run, Swim, Yoga/Other): use actual watch/Intervals calories when present, else realistic weight-scaled burn
+  if (session.status === 'completed' && Number(session.actualKcal) > 0) {
+    return { kj: 0, kcal: Math.round(Number(session.actualKcal)), sportKind };
+  }
+  if (Number(session.plannedKcal) > 0) {
+    return { kj: 0, kcal: Math.round(Number(session.plannedKcal)), sportKind };
+  }
+  const meta = INTENSITY_META[session.intensity] || INTENSITY_META.endurance;
+  let kcalPerMin = 5.0;
+  if (sportKind === 'strength') {
+    kcalPerMin = meta.ifEst >= 0.85 ? 6.8 : 5.6;
+  } else if (sportKind === 'run') {
+    kcalPerMin = meta.ifEst >= 0.88 ? 13.0 : meta.ifEst >= 0.75 ? 11.2 : 9.8;
+  } else if (sportKind === 'swim') {
+    kcalPerMin = 9.5;
+  } else {
+    kcalPerMin = 4.2;
+  }
+  return { kj: 0, kcal: Math.round(mins * kcalPerMin * wFactor), sportKind };
+}
+
 export function classifySessionCategory(session, exerciseKcal) {
   if (!session || session.intensity === 'rest' || !session.durationMin || exerciseKcal < 130) return 'REST';
-  if (exerciseKcal >= 2250 || session.intensity === 'race' || session.durationMin >= 200) return 'VERY_HIGH';
-  if (exerciseKcal >= 1350 || session.intensity === 'threshold' || session.intensity === 'vo2max') return 'HIGH';
-  if (exerciseKcal >= 620 || session.intensity === 'tempo' || session.intensity === 'sweetspot' || session.durationMin >= 85) {
+  const sportKind = normalizeSportKind(session.sport, session.title);
+  if (exerciseKcal >= 2250 || session.intensity === 'race' || (sportKind === 'ride' && session.durationMin >= 200)) {
+    return 'VERY_HIGH';
+  }
+  if (
+    exerciseKcal >= 1350 ||
+    (sportKind === 'ride' && (session.intensity === 'threshold' || session.intensity === 'vo2max')) ||
+    (sportKind === 'run' && session.durationMin >= 90)
+  ) {
+    return 'HIGH';
+  }
+  if (
+    exerciseKcal >= 620 ||
+    (sportKind === 'ride' && (session.intensity === 'tempo' || session.intensity === 'sweetspot' || session.durationMin >= 85)) ||
+    (sportKind === 'run' && session.durationMin >= 45)
+  ) {
     return 'MODERATE';
   }
   return 'LOW';
+}
+
+const CAT_RANK = { REST: 0, LOW: 1, MODERATE: 2, HIGH: 3, VERY_HIGH: 4 };
+
+function classifyDayWorkouts(workouts, totalExerciseKcal) {
+  if (!Array.isArray(workouts) || workouts.length === 0 || totalExerciseKcal < 130) return 'REST';
+  let best = 'LOW';
+  if (totalExerciseKcal >= 2250) best = 'VERY_HIGH';
+  else if (totalExerciseKcal >= 1350) best = 'HIGH';
+  else if (totalExerciseKcal >= 620) best = 'MODERATE';
+
+  for (const w of workouts) {
+    const c = classifySessionCategory(w, w.kcal || 0);
+    if ((CAT_RANK[c] || 0) > (CAT_RANK[best] || 0)) {
+      best = c;
+    }
+  }
+  return best;
 }
 
 // Expenditure-matched & progressive on-bike fueling with custom bottle sizes and practical salt/tablet recipes
@@ -59,6 +174,12 @@ export function computeOnBikePlan(session, category, exerciseKcal, options = {})
   if (!session || !session.durationMin || session.intensity === 'rest') {
     return null;
   }
+  const sportKind = normalizeSportKind(session.sport, session.title);
+  // Only rides (and long runs >= 65m) get an active intra-workout carb/bottle plan; gym/yoga/short spins do not!
+  if (sportKind !== 'ride' && !(sportKind === 'run' && session.durationMin >= 65)) {
+    return null;
+  }
+
   const hrs = session.durationMin / 60;
   const kcalPerHr = exerciseKcal / Math.max(hrs, 0.25);
   const meta = INTENSITY_META[session.intensity] || INTENSITY_META.endurance;
@@ -81,7 +202,7 @@ export function computeOnBikePlan(session, category, exerciseKcal, options = {})
   } else {
     const replaceFraction = category === 'VERY_HIGH' ? 0.56 : category === 'HIGH' ? 0.5 : 0.44;
     const rawRate = carbBurnGPerHr * replaceFraction;
-    const cap = category === 'VERY_HIGH' ? 95 : category === 'HIGH' ? 85 : 65;
+    const cap = sportKind === 'run' ? 65 : category === 'VERY_HIGH' ? 95 : category === 'HIGH' ? 85 : 65;
     carbsPerHour = Math.round(Math.min(cap, Math.max(30, rawRate)) / 5) * 5;
 
     if (session.durationMin >= 150 && carbsPerHour >= 60) {
@@ -103,7 +224,9 @@ export function computeOnBikePlan(session, category, exerciseKcal, options = {})
   const bottleSaltText = formatSodiumPractical(sodiumPerBottleMg, tabletMg);
 
   let note = `Short easy spin — ${bottles}× ${bottleLabel} water + ${bottleSaltText} per bottle. Save carbs for meals.`;
-  if (carbsPerHour > 60) {
+  if (sportKind === 'run') {
+    note = `Long run fueling: ~${totalCarbs}g carbs (${carbsPerHour}g/h via gels/chews) + ${bottleSaltText} electrolyte fluid.`;
+  } else if (carbsPerHour > 60) {
     note = `${bottles}× ${bottleLabel} bottles (~${carbsPerBottle}g carbs + ${bottleSaltText} per bottle, or split with gels). ${
       progressiveRamp ? `Gradual ramp: ${progressiveRamp}.` : 'Sip steadily every 15 min.'
     }`;
@@ -131,6 +254,24 @@ export function computeOnBikePlan(session, category, exerciseKcal, options = {})
   };
 }
 
+function getNonRideFuelNote(sportKind, durationMin) {
+  if (sportKind === 'strength') {
+    return `Gym / Strength (${durationMin}m) — no bike gels needed. Drink water during lifting and include 25–40g protein + carbs in your next meal for muscle repair.`;
+  }
+  if (sportKind === 'swim') {
+    return `Swim session (${durationMin}m) — keep a water bottle on deck and refuel with carbs + protein afterward.`;
+  }
+  if (sportKind === 'run') {
+    return `Run (${durationMin}m) — water + electrolytes are plenty; save carbs for your regular meals.`;
+  }
+  return `${durationMin}m workout — hydrate well; calories burned are automatically added to today's meal targets.`;
+}
+
+function normalizeActiveWorkouts(input) {
+  const arr = Array.isArray(input) ? input.filter(Boolean) : input ? [input] : [];
+  return arr.filter((s) => s && s.intensity !== 'rest' && normalizeSportKind(s.sport, s.title) !== 'rest' && (Number(s.durationMin) || 0) > 0);
+}
+
 export function computeBmr(profile, weightKg) {
   const w = weightKg || profile.defaultWeightKg || 74;
   const h = profile.heightCm || 179;
@@ -144,8 +285,11 @@ export function computeDailyPlan({
   profile,
   biometricsSummary,
   todaySession,
+  todaySessions,
   tomorrowSession,
+  tomorrowSessions,
   yesterdaySession,
+  yesterdaySessions,
   dayMeals,
   dayTimelineOrder,
 }) {
@@ -154,21 +298,48 @@ export function computeDailyPlan({
   const leanMassKg = biometricsSummary?.leanMassKg || weightKg * (1 - bodyFatPct / 100);
   const gePct = profile.grossEfficiencyPct || 22.0;
 
-  const exerciseKj = estimateSessionKj(todaySession, profile.ftp);
-  const exerciseKcal = kjToMetabolicKcal(exerciseKj, gePct);
-  const rideHours = todaySession && todaySession.intensity !== 'rest' ? (todaySession.durationMin || 0) / 60 : 0;
+  const rawTodayList = normalizeActiveWorkouts(todaySessions ?? (todaySession ? [todaySession] : []));
+  const rawTomorrowList = normalizeActiveWorkouts(tomorrowSessions ?? (tomorrowSession ? [tomorrowSession] : []));
+  const rawYesterdayList = normalizeActiveWorkouts(yesterdaySessions ?? (yesterdaySession ? [yesterdaySession] : []));
+
+  // Compute burn for every workout today (completed AND still-scheduled!)
+  const todayWorkoutsBase = rawTodayList.map((sess) => {
+    const burn = estimateSessionBurn(sess, profile, weightKg);
+    return {
+      ...sess,
+      sportKind: burn.sportKind,
+      sportLabel: sportLabelForKind(burn.sportKind, sess.sport),
+      kj: burn.kj,
+      kcal: burn.kcal,
+    };
+  });
+
+  // Sort workouts chronologically by timing (morning -> midday -> evening), completed first if tie
+  const TIMING_ORDER = { morning: 0, midday: 1, evening: 2 };
+  todayWorkoutsBase.sort((a, b) => {
+    const ta = TIMING_ORDER[a.timing] ?? 2;
+    const tb = TIMING_ORDER[b.timing] ?? 2;
+    if (ta !== tb) return ta - tb;
+    if (a.status !== b.status) return a.status === 'completed' ? -1 : 1;
+    return 0;
+  });
+
+  const exerciseKj = todayWorkoutsBase.reduce((s, w) => s + w.kj, 0);
+  const exerciseKcal = todayWorkoutsBase.reduce((s, w) => s + w.kcal, 0);
+  const rideHours = todayWorkoutsBase.reduce((s, w) => s + (w.durationMin || 0) / 60, 0);
   const nonExerciseHours = Math.max(12, Number((24 - rideHours).toFixed(1)));
 
-  const category = classifySessionCategory(todaySession, exerciseKcal);
+  const category = classifyDayWorkouts(todayWorkoutsBase, exerciseKcal);
 
-  const tomorrowKj = estimateSessionKj(tomorrowSession, profile.ftp);
-  const tomorrowKcal = kjToMetabolicKcal(tomorrowKj, gePct);
-  const tomorrowCategory = classifySessionCategory(tomorrowSession, tomorrowKcal);
+  const tomorrowBurnList = rawTomorrowList.map((s) => ({ ...s, ...estimateSessionBurn(s, profile, weightKg) }));
+  const tomorrowKcal = tomorrowBurnList.reduce((s, w) => s + w.kcal, 0);
+  const tomorrowCategory = classifyDayWorkouts(tomorrowBurnList, tomorrowKcal);
   const needsTomorrowPreload = tomorrowCategory === 'HIGH' || tomorrowCategory === 'VERY_HIGH';
+  const tomorrowTitle = tomorrowBurnList.map((w) => w.title).filter(Boolean).join(' + ') || null;
 
-  const yesterdayKj = estimateSessionKj(yesterdaySession, profile.ftp);
-  const yesterdayKcal = kjToMetabolicKcal(yesterdayKj, gePct);
-  const yesterdayCategory = classifySessionCategory(yesterdaySession, yesterdayKcal);
+  const yesterdayBurnList = rawYesterdayList.map((s) => ({ ...s, ...estimateSessionBurn(s, profile, weightKg) }));
+  const yesterdayKcal = yesterdayBurnList.reduce((s, w) => s + w.kcal, 0);
+  const yesterdayCategory = classifyDayWorkouts(yesterdayBurnList, yesterdayKcal);
   const recoveryCarryover = yesterdayCategory === 'VERY_HIGH';
 
   // Tim Podlogar Non-Exercise-Hours RMR correction:
@@ -210,7 +381,7 @@ export function computeDailyPlan({
     plannedDeficit = Math.min(Math.round(avgDailyDeficit * multByCat[category]), capByCat[category]);
     if (needsTomorrowPreload && (category === 'REST' || category === 'LOW')) {
       plannedDeficit = Math.round(plannedDeficit * 0.55);
-      deficitStrategyNote = `Lighter deficit (-${plannedDeficit} kcal) because tomorrow is ${tomorrowSession?.title || 'a key session'} — prioritizing glycogen readiness.`;
+      deficitStrategyNote = `Lighter deficit (-${plannedDeficit} kcal) because tomorrow is ${tomorrowTitle || 'a key session'} — prioritizing glycogen readiness.`;
     } else if (category === 'HIGH' || category === 'VERY_HIGH') {
       deficitStrategyNote = `Key session day — deficit paused (${plannedDeficit > 0 ? `-${plannedDeficit} kcal` : '0 kcal'}) so watts & recovery stay sharp.`;
     } else {
@@ -230,7 +401,7 @@ export function computeDailyPlan({
     targetKcal = minSafeIntake;
     plannedDeficit = totalTdee - targetKcal;
     eaGuardTriggered = true;
-    deficitStrategyNote = `Cut trimmed to -${Math.max(0, plannedDeficit)} kcal to keep enough fuel above your ride burn for recovery and muscle.`;
+    deficitStrategyNote = `Cut trimmed to -${Math.max(0, plannedDeficit)} kcal to keep enough fuel above your workout burn for recovery and muscle.`;
   }
 
   // Macros calibrated to BOTH bodyweight (g/kg) AND total energy (% kcal)
@@ -285,39 +456,75 @@ export function computeDailyPlan({
 
   targetKcal = carbsG * 4 + proteinG * 4 + fatG * 9;
   const energyAvailability = Number(((targetKcal - exerciseKcal) / Math.max(leanMassKg, 40)).toFixed(1));
-  const onBikePlan = computeOnBikePlan(todaySession, category, exerciseKcal, {
+
+  const fuelOptions = {
     defaultBottleMl: profile.defaultBottleMl || 650,
     electrolyteTabMg: profile.electrolyteTabMg || 500,
     units: getUnits(profile),
+  };
+
+  // Pick the primary workout (highest-kcal ride/endurance workout, else first workout) to keep the canonical 'on_bike' slot ID
+  let primaryIdx = -1;
+  if (todayWorkoutsBase.length > 0) {
+    const rideIndices = todayWorkoutsBase
+      .map((w, idx) => ({ w, idx }))
+      .filter(({ w }) => w.sportKind === 'ride' || (w.sportKind === 'run' && w.durationMin >= 65));
+    if (rideIndices.length > 0) {
+      rideIndices.sort((a, b) => b.w.kcal - a.w.kcal);
+      primaryIdx = rideIndices[0].idx;
+    } else {
+      primaryIdx = 0;
+    }
+  }
+
+  const workouts = todayWorkoutsBase.map((w, idx) => {
+    const wCat = classifySessionCategory(w, w.kcal);
+    const fuelPlan = computeOnBikePlan(w, wCat, w.kcal, fuelOptions);
+    const slotId = idx === primaryIdx ? 'on_bike' : `workout-${w.id}`;
+    return {
+      ...w,
+      slotId,
+      isPrimaryWorkout: idx === primaryIdx,
+      workoutCategory: wCat,
+      onBikePlan: fuelPlan,
+      fuelNote: fuelPlan ? fuelPlan.note : getNonRideFuelNote(w.sportKind, w.durationMin),
+    };
   });
+
+  const primaryWorkout = primaryIdx >= 0 ? workouts[primaryIdx] : null;
+  const onBikePlan = primaryWorkout?.onBikePlan || workouts.find((w) => w.onBikePlan)?.onBikePlan || null;
+  const totalOnBikeCarbs = workouts.reduce((s, w) => s + (w.onBikePlan?.totalCarbs || 0), 0);
+  const totalOnBikeSodiumMg = workouts.reduce((s, w) => s + (w.onBikePlan?.totalSodiumMg || 0), 0);
 
   // Plain-English Nutrient Timing Tips
   const leadHrs = Number(profile.preRideLeadHours || 2);
   const preRideCarbTargetG = Math.round(weightKg * Math.min(3.5, Math.max(1.0, leadHrs)));
-  const hasRide = Boolean(todaySession && todaySession.durationMin > 0 && todaySession.intensity !== 'rest');
+  const hasAnyWorkout = workouts.length > 0;
+  const hasRide = workouts.some((w) => w.sportKind === 'ride');
 
   const timingCoaching = {
     preRideCue:
-      hasRide && (todaySession.timing === 'morning' || category === 'HIGH' || category === 'VERY_HIGH')
+      hasRide && (primaryWorkout?.timing === 'morning' || category === 'HIGH' || category === 'VERY_HIGH')
         ? `Aim for ~${preRideCarbTargetG}g carbs (${leadHrs}h before). Include fruit, honey, or yogurt/milk for quick energy; keep fat and fiber light.`
         : null,
-    postRideCue: !hasRide
+    postRideCue: !hasAnyWorkout
       ? null
       : needsTomorrowPreload
-      ? `Hard ride tomorrow: refuel within 45 min (~${Math.round(weightKg * 1.1)}g carbs from starch + fruit/juice + 30g protein, low fat) so your energy stores refill overnight.`
-      : `Tomorrow is easy/rest: eat a normal protein + carb meal soon after riding to avoid evening cravings — no extra sugar loading needed.`,
+      ? `Hard session tomorrow: refuel within 45 min (~${Math.round(weightKg * 1.1)}g carbs from starch + fruit/juice + 30g protein, low fat) so your energy stores refill overnight.`
+      : `Tomorrow is easy/rest: eat a normal protein + carb meal soon after training to avoid evening cravings — no extra sugar loading needed.`,
   };
 
   const meals = buildMealTimeline({
     category,
-    todaySession,
+    workouts,
+    primaryWorkout,
     needsTomorrowPreload,
     carbsG,
     proteinG,
     fatG,
-    onBikePlan,
+    totalOnBikeCarbs,
     dayMeals,
-    timelineOrder: dayTimelineOrder || todaySession?.timelineOrder || profile.defaultTimelineOrder,
+    timelineOrder: dayTimelineOrder || primaryWorkout?.timelineOrder || profile.defaultTimelineOrder,
   });
 
   const microTargets = {
@@ -327,7 +534,7 @@ export function computeDailyPlan({
     calcium: 1100,
     vitD: 15,
     magnesium: profile.sex === 'female' ? 350 : 420,
-    sodium: profile.goalMode === 'carb_load' ? 1800 : 2300 + (onBikePlan ? onBikePlan.totalSodiumMg : 0),
+    sodium: profile.goalMode === 'carb_load' ? 1800 : 2300 + totalOnBikeSodiumMg,
   };
 
   return {
@@ -351,7 +558,7 @@ export function computeDailyPlan({
     categoryMeta: FUEL_CATEGORY_META[category],
     tomorrowCategory,
     needsTomorrowPreload,
-    tomorrowTitle: tomorrowSession?.title || null,
+    tomorrowTitle,
     timingCoaching,
     targets: {
       kcal: targetKcal,
@@ -365,7 +572,10 @@ export function computeDailyPlan({
       proteinPct: Math.round(((proteinG * 4) / Math.max(targetKcal, 1)) * 100),
       fatPct: Math.round(((fatG * 9) / Math.max(targetKcal, 1)) * 100),
     },
+    workouts,
     onBikePlan,
+    totalOnBikeCarbs,
+    totalOnBikeSodiumMg,
     meals,
     microTargets,
   };
@@ -403,27 +613,27 @@ function distributeByWeights(total, weights) {
 
 function buildMealTimeline({
   category,
-  todaySession,
+  workouts = [],
+  primaryWorkout = null,
   needsTomorrowPreload,
   carbsG,
   proteinG,
   fatG,
-  onBikePlan,
+  totalOnBikeCarbs = 0,
   dayMeals,
   timelineOrder,
 }) {
-  const hasRide = Boolean(todaySession && todaySession.durationMin > 0 && todaySession.intensity !== 'rest');
-  const timing = inferTimingFromOrder(timelineOrder, todaySession?.timing || 'evening');
-  const onBikeCarbs = onBikePlan?.totalCarbs || 0;
-  const offBikeCarbs = Math.max(80, carbsG - onBikeCarbs);
+  const hasWorkout = workouts.length > 0;
+  const timing = inferTimingFromOrder(timelineOrder, primaryWorkout?.timing || 'evening');
+  const offBikeCarbs = Math.max(80, carbsG - totalOnBikeCarbs);
 
   const activeMealDefs =
     Array.isArray(dayMeals) && dayMeals.length > 0 ? dayMeals : DEFAULT_MEAL_SLOTS;
 
   let baseCWeights = { breakfast: 0.25, lunch: 0.3, snack: 0.15, dinner: 0.3 };
-  if (hasRide && timing === 'morning') {
+  if (hasWorkout && timing === 'morning') {
     baseCWeights = { breakfast: 0.3, lunch: 0.3, snack: 0.16, dinner: 0.24 };
-  } else if (hasRide && timing === 'evening') {
+  } else if (hasWorkout && timing === 'evening') {
     baseCWeights = { breakfast: 0.23, lunch: 0.29, snack: 0.2, dinner: 0.28 };
   }
   const basePWeights = { breakfast: 0.25, lunch: 0.28, snack: 0.18, dinner: 0.29 };
@@ -447,9 +657,7 @@ function buildMealTimeline({
     : orderedMealDefs[orderedMealDefs.length - 1]?.id || null;
 
   const rawCW = orderedMealDefs.map((m) => {
-    let w =
-      baseCWeights[m.kind] ??
-      (m.size === 'snack' ? 0.16 : 0.28);
+    let w = baseCWeights[m.kind] ?? (m.size === 'snack' ? 0.16 : 0.28);
     if (needsTomorrowPreload && m.id === preloadTargetId) {
       w += 0.08;
     }
@@ -477,14 +685,14 @@ function buildMealTimeline({
     let label = m.label;
     let timeHint = m.size === 'snack' ? 'Snack' : 'Meal';
     if (m.kind === 'breakfast') {
-      label = hasRide && timing === 'morning' ? 'Pre-Ride Breakfast' : m.label || 'Breakfast';
-      timeHint = hasRide && timing === 'morning' ? 'Light & quick energy · Low fiber' : 'Morning';
+      label = hasWorkout && timing === 'morning' ? 'Pre-Workout Breakfast' : m.label || 'Breakfast';
+      timeHint = hasWorkout && timing === 'morning' ? 'Light & quick energy · Low fiber' : 'Morning';
     } else if (m.kind === 'lunch') {
       label = m.label || 'Lunch';
       timeHint = 'Midday';
     } else if (m.kind === 'snack') {
-      label = hasRide ? (timing === 'evening' ? 'Pre-Ride Snack' : 'Post-Ride Recovery') : 'Afternoon Snack';
-      timeHint = hasRide && timing === 'evening' ? '90m before · Low fat' : hasRide ? 'Within 45m · Low fat' : 'Afternoon';
+      label = hasWorkout ? (timing === 'evening' ? 'Pre-Ride Snack' : 'Post-Workout Recovery') : 'Afternoon Snack';
+      timeHint = hasWorkout && timing === 'evening' ? '90m before · Low fat' : hasWorkout ? 'Within 45m · Low fat' : 'Afternoon';
     } else if (m.kind === 'dinner') {
       label = needsTomorrowPreload ? 'Dinner (Pre-Load)' : m.label || 'Dinner';
       timeHint = 'Evening';
@@ -494,6 +702,7 @@ function buildMealTimeline({
       slot: m.id,
       kind: m.kind || 'custom',
       size: m.size || 'meal',
+      isWorkout: false,
       label,
       baseLabel: m.label,
       location: m.location || 'Home / Work',
@@ -506,41 +715,71 @@ function buildMealTimeline({
     };
   });
 
-  if (hasRide && onBikePlan) {
-    slotsById.on_bike = {
-      slot: 'on_bike',
-      kind: 'on_bike',
-      label: 'Training · On-Bike Fuel',
-      baseLabel: 'Training',
-      location: 'During Ride',
-      timeHint:
-        onBikeCarbs > 0
-          ? onBikePlan.progressiveRamp || `${onBikePlan.carbsPerHour}g/hr · ${todaySession.durationMin}m`
-          : `Water + electrolytes · ${todaySession.durationMin}m`,
-      targetCarbs: onBikeCarbs,
+  // Create a draggable card for EVERY workout today (completed AND still-scheduled, rides AND gym/run/swim!)
+  for (const w of workouts) {
+    const wp = w.onBikePlan;
+    const wCarbs = wp?.totalCarbs || 0;
+    const badgeCode = wp
+      ? wp.carbsPerHour >= 70
+        ? 'HIGH'
+        : wCarbs > 0
+        ? 'MED'
+        : 'LOW'
+      : w.kcal >= 450
+      ? 'MED'
+      : 'LOW';
+
+    slotsById[w.slotId] = {
+      slot: w.slotId,
+      kind: 'workout',
+      isWorkout: true,
+      workout: w,
+      label: w.title || w.sportLabel || 'Workout',
+      baseLabel: w.title || w.sportLabel || 'Workout',
+      location: w.sportLabel,
+      timeHint: wp
+        ? wCarbs > 0
+          ? wp.progressiveRamp || `${wp.carbsPerHour}g/hr · ${w.durationMin}m`
+          : `Water + electrolytes · ${w.durationMin}m`
+        : `${w.sportLabel} · ${w.durationMin}m · ~${w.kcal} kcal`,
+      targetCarbs: wCarbs,
       targetProtein: 0,
       targetFat: 0,
-      carbCode: onBikePlan.carbsPerHour >= 70 ? 'HIGH' : onBikeCarbs > 0 ? 'MED' : 'LOW',
-      targetKcal: onBikeCarbs * 4,
+      carbCode: badgeCode,
+      targetKcal: wCarbs * 4,
     };
   }
 
-  // Respect user's custom card placement order (filtering out any removed meals!)
+  // Respect user's custom card placement order; insert any new workouts smartly by their time of day!
   let effectiveOrder;
   if (Array.isArray(timelineOrder) && timelineOrder.length > 0) {
     effectiveOrder = timelineOrder.filter((id) => Boolean(slotsById[id]));
-    for (const id of Object.keys(slotsById)) {
-      if (!effectiveOrder.includes(id)) effectiveOrder.push(id);
-    }
   } else {
     effectiveOrder = [...orderedMealIds];
-    if (slotsById.on_bike) {
-      const insertIdx = Math.min(
-        effectiveOrder.length,
-        timing === 'morning' ? 1 : timing === 'midday' ? 2 : Math.max(0, effectiveOrder.length - 1)
-      );
-      effectiveOrder.splice(insertIdx, 0, 'on_bike');
+  }
+
+  // Insert any missing workouts (e.g. a newly synced Morning Gym + Evening Ride) at their natural time-of-day slot
+  for (const w of workouts) {
+    if (!effectiveOrder.includes(w.slotId)) {
+      const wTiming = w.timing || 'evening';
+      let insertIdx = effectiveOrder.length;
+      if (wTiming === 'morning') {
+        const bfIdx = effectiveOrder.indexOf('breakfast');
+        insertIdx = bfIdx >= 0 ? bfIdx + 1 : 0;
+      } else if (wTiming === 'midday') {
+        const lIdx = effectiveOrder.indexOf('lunch');
+        insertIdx = lIdx >= 0 ? lIdx + 1 : Math.min(2, effectiveOrder.length);
+      } else {
+        const dIdx = effectiveOrder.indexOf('dinner');
+        insertIdx = dIdx >= 0 ? dIdx : effectiveOrder.length;
+      }
+      effectiveOrder.splice(insertIdx, 0, w.slotId);
     }
+  }
+
+  // Ensure any remaining meal slots are also present
+  for (const id of Object.keys(slotsById)) {
+    if (!effectiveOrder.includes(id)) effectiveOrder.push(id);
   }
 
   const orderedSlots = effectiveOrder.map((id) => slotsById[id]).filter(Boolean);

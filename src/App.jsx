@@ -143,15 +143,29 @@ export default function App() {
     [state.biometrics, state.profile]
   );
 
-  const sessionByDate = useMemo(() => {
+  const sessionsByDate = useMemo(() => {
     const map = new Map();
-    state.sessions.forEach((s) => map.set(s.date, s));
+    state.sessions.forEach((s) => {
+      if (!s || !s.date) return;
+      const list = map.get(s.date) || [];
+      list.push(s);
+      map.set(s.date, list);
+    });
     return map;
   }, [state.sessions]);
 
-  const selectedSession = sessionByDate.get(selectedDate) || null;
-  const tomorrowSession = sessionByDate.get(shiftIsoDate(selectedDate, 1)) || null;
-  const yesterdaySession = sessionByDate.get(shiftIsoDate(selectedDate, -1)) || null;
+  const selectedSessions = useMemo(
+    () => sessionsByDate.get(selectedDate) || [],
+    [sessionsByDate, selectedDate]
+  );
+  const tomorrowSessions = useMemo(
+    () => sessionsByDate.get(shiftIsoDate(selectedDate, 1)) || [],
+    [sessionsByDate, selectedDate]
+  );
+  const yesterdaySessions = useMemo(
+    () => sessionsByDate.get(shiftIsoDate(selectedDate, -1)) || [],
+    [sessionsByDate, selectedDate]
+  );
 
   const selectedDayMeals = state.customMealsByDate?.[selectedDate] || null;
   const selectedDayOrder = state.timelineOrderByDate?.[selectedDate] || null;
@@ -162,9 +176,9 @@ export default function App() {
         date: selectedDate,
         profile: state.profile,
         biometricsSummary,
-        todaySession: selectedSession,
-        tomorrowSession,
-        yesterdaySession,
+        todaySessions: selectedSessions,
+        tomorrowSessions,
+        yesterdaySessions,
         dayMeals: selectedDayMeals,
         dayTimelineOrder: selectedDayOrder,
       }),
@@ -172,9 +186,9 @@ export default function App() {
       selectedDate,
       state.profile,
       biometricsSummary,
-      selectedSession,
-      tomorrowSession,
-      yesterdaySession,
+      selectedSessions,
+      tomorrowSessions,
+      yesterdaySessions,
       selectedDayMeals,
       selectedDayOrder,
     ]
@@ -212,38 +226,47 @@ export default function App() {
         handleImportBiometrics(syncData.biometrics);
       }
       setState((prev) => {
-        const sessMap = new Map(prev.sessions.map((s) => [s.date, s]));
-        (syncData.plannedSessions || []).forEach((s) => {
-          const existing = sessMap.get(s.date);
-          if (!existing || existing.status !== 'completed') {
-            sessMap.set(s.date, {
-              ...s,
-              bottleSizeMl: existing?.bottleSizeMl,
-              timelineOrder: existing?.timelineOrder,
-            });
-          }
+        // Index previous sessions by id so we preserve per-workout user tweaks (bottleSizeMl, timelineOrder)
+        const prevById = new Map(prev.sessions.map((s) => [s.id, s]));
+        const incomingIcu = [
+          ...(syncData.completedSessions || []),
+          ...(syncData.plannedSessions || []),
+        ];
+        const syncedDates = new Set(incomingIcu.map((s) => s.date));
+
+        // Keep user-created manual sessions (and sample sessions on dates outside Intervals.icu data);
+        // drop stale icu-* sessions (so paired/deleted Intervals events don't duplicate) and replace demo placeholders on synced dates
+        const retainedManual = prev.sessions.filter((s) => {
+          if (s.source === 'intervals.icu' || String(s.id || '').startsWith('icu-')) return false;
+          if (syncedDates.has(s.date) && /^sess-(m\d|p\d|0)$/.test(String(s.id || ''))) return false;
+          return true;
         });
-        const nextLogsByDate = { ...prev.logsByDate };
-        (syncData.completedSessions || []).forEach((s) => {
-          const existing = sessMap.get(s.date);
-          sessMap.set(s.date, {
+
+        const mergedIcu = incomingIcu.map((s) => {
+          const existing = prevById.get(s.id);
+          return {
             ...s,
             bottleSizeMl: existing?.bottleSizeMl,
             timelineOrder: existing?.timelineOrder,
-          });
-          // If the completed ride from Intervals.icu recorded actual carbs_ingested and user hasn't logged on-bike fuel yet, auto-log it
+          };
+        });
+
+        const nextLogsByDate = { ...prev.logsByDate };
+        (syncData.completedSessions || []).forEach((s) => {
+          // If a completed ride from Intervals.icu recorded actual carbs_ingested and user hasn't logged fuel yet, auto-log it
           if (s.carbsIngested > 0) {
             const dayLogs = nextLogsByDate[s.date] || [];
-            const alreadyLoggedOnBike = dayLogs.some((l) => l.slot === 'on_bike');
-            if (!alreadyLoggedOnBike) {
+            const logId = `log-bike-icu-${s.id}`;
+            const alreadyLogged = dayLogs.some((l) => l.id === logId || l.slot === 'on_bike');
+            if (!alreadyLogged) {
               nextLogsByDate[s.date] = [
                 ...dayLogs,
                 {
-                  id: `log-bike-icu-${s.date}`,
+                  id: logId,
                   slot: 'on_bike',
                   type: 'on_bike',
-                  title: 'Actual Ride Fuel (from Intervals.icu)',
-                  detail: `${s.carbsIngested}g carbs synced from completed ride`,
+                  title: `Actual Fuel · ${s.title}`,
+                  detail: `${s.carbsIngested}g carbs synced from Intervals.icu`,
                   carbs: s.carbsIngested,
                   protein: 0,
                   fat: 0,
@@ -256,13 +279,14 @@ export default function App() {
             }
           }
         });
+
         const nextProfile = syncData.profilePatch
           ? { ...prev.profile, ...syncData.profilePatch }
           : prev.profile;
         return {
           ...prev,
           profile: nextProfile,
-          sessions: Array.from(sessMap.values()),
+          sessions: [...retainedManual, ...mergedIcu],
           logsByDate: nextLogsByDate,
         };
       });
@@ -416,6 +440,7 @@ export default function App() {
 
   const handleSaveOnBikeLog = ({
     existingId,
+    slotId = 'on_bike',
     carbs,
     protein = 0,
     fat = 0,
@@ -439,7 +464,7 @@ export default function App() {
     const scannedNote = scannedItems.length > 0 ? `${scannedItems.join(', ')} · ` : '';
     const entry = {
       id: existingId || `log-bike-${Date.now()}`,
-      slot: 'on_bike',
+      slot: slotId || 'on_bike',
       type: 'on_bike',
       title: `Actual Ride Fuel (${rate}g/hr)`,
       detail: `${scannedNote}${bottles}× ${bottleLabel} · ${na}mg sodium · ${diffNote}`,
@@ -525,13 +550,14 @@ export default function App() {
     showToast(`Saved "${mealName}" to your Saved Meals!`);
   };
 
-  const handleSetRideBottleSize = (date, bottleSizeMl, asDefault = true) => {
+  const handleSetRideBottleSize = (date, bottleSizeMl, asDefault = true, sessionId = null) => {
     setState((prev) => ({
       ...prev,
       profile: asDefault ? { ...prev.profile, defaultBottleMl: bottleSizeMl } : prev.profile,
-      sessions: prev.sessions.map((s) =>
-        s.date === date ? { ...s, bottleSizeMl: asDefault ? undefined : bottleSizeMl } : s
-      ),
+      sessions: prev.sessions.map((s) => {
+        const matches = sessionId ? s.id === sessionId : s.date === date;
+        return matches ? { ...s, bottleSizeMl: asDefault ? undefined : bottleSizeMl } : s;
+      }),
     }));
     if (asDefault) {
       showToast(`Saved ${bottleSizeMl} ml as your default bottle size.`);
@@ -543,7 +569,7 @@ export default function App() {
     const ratio = idx >= 0 ? idx / Math.max(newOrder.length - 1, 1) : -1;
     const inferredTiming =
       ratio >= 0 ? (ratio <= 0.3 ? 'morning' : ratio <= 0.6 ? 'midday' : 'evening') : undefined;
-    const hasCustomSlots = newOrder.some((id) => id.startsWith('custom-'));
+    const hasCustomSlots = newOrder.some((id) => id.startsWith('custom-') || id.startsWith('workout-'));
     setState((prev) => ({
       ...prev,
       profile: hasCustomSlots ? prev.profile : { ...prev.profile, defaultTimelineOrder: newOrder },
@@ -638,40 +664,71 @@ export default function App() {
     showToast('Restored default Breakfast, Lunch, Snack & Dinner for this day.');
   };
 
-  const handleCompleteRide = (date, actualKj, durationMin) => {
+  const handleCompleteRide = (date, actualKj, durationMin, sessionId = null, actualKcal = 0) => {
     setState((prev) => {
-      const exists = prev.sessions.some((s) => s.date === date);
+      const targetId = sessionId || prev.sessions.find((s) => s.date === date)?.id;
+      const exists = Boolean(targetId && prev.sessions.some((s) => s.id === targetId));
       const updated = exists
         ? prev.sessions.map((s) =>
-            s.date === date ? { ...s, status: 'completed', actualKj, durationMin } : s
+            s.id === targetId
+              ? {
+                  ...s,
+                  status: 'completed',
+                  actualKj: actualKj || 0,
+                  actualKcal: actualKcal || s.actualKcal || 0,
+                  durationMin,
+                }
+              : s
           )
         : [
             ...prev.sessions,
             {
-              id: `sess-${date}`,
+              id: `manual-${date}-${Date.now()}`,
               date,
-              title: 'Completed Ride',
-              sport: 'Ride',
+              title: 'Completed Workout',
+              sport: actualKj > 0 ? 'Ride' : 'Workout',
               status: 'completed',
               durationMin,
               intensity: actualKj >= 1300 ? 'threshold' : 'endurance',
-              plannedKj: actualKj,
-              actualKj,
+              plannedKj: actualKj || 0,
+              actualKj: actualKj || 0,
+              plannedKcal: actualKcal || 0,
+              actualKcal: actualKcal || 0,
               timing: 'evening',
               source: 'manual',
             },
           ];
       return { ...prev, sessions: updated };
     });
-    showToast(`Updated ride to ${actualKj} kJ — remaining meal targets recalculated.`);
+    showToast(
+      actualKj > 0
+        ? `Updated ride to ${actualKj} kJ — remaining meal targets recalculated.`
+        : `Updated workout (${actualKcal || durationMin} ${actualKcal > 0 ? 'kcal' : 'min'}) — daily targets recalculated.`
+    );
   };
 
   const handleSaveSession = (sessionObj) => {
     setState((prev) => {
-      const filtered = prev.sessions.filter((s) => s.date !== sessionObj.date);
-      return { ...prev, sessions: [...filtered, sessionObj] };
+      // If switching to Rest Day explicitly for a single-session edit, clear active sessions on that date only if editing
+      if (sessionObj.intensity === 'rest' || sessionObj.sport === 'Rest') {
+        const filtered = prev.sessions.filter((s) => s.id !== sessionObj.id);
+        return { ...prev, sessions: filtered };
+      }
+      const exists = prev.sessions.some((s) => s.id === sessionObj.id);
+      const nextSessions = exists
+        ? prev.sessions.map((s) => (s.id === sessionObj.id ? { ...s, ...sessionObj } : s))
+        : [...prev.sessions, sessionObj];
+      return { ...prev, sessions: nextSessions };
     });
     showToast(`Saved ${sessionObj.title} for ${sessionObj.date}`);
+  };
+
+  const handleDeleteSession = (sessionId, title = 'Workout') => {
+    setState((prev) => ({
+      ...prev,
+      sessions: prev.sessions.filter((s) => s.id !== sessionId),
+    }));
+    showToast(`Removed ${title} — daily fuel targets recalculated.`);
   };
 
   const handleSaveStaple = (staple) => {
@@ -933,7 +990,7 @@ export default function App() {
             profile={state.profile}
             units={units}
             usdaApiKey={usdaApiKey}
-            session={selectedSession}
+            sessions={selectedSessions}
             logs={selectedLogs}
             staples={state.staples}
             supplements={state.supplements}
@@ -958,6 +1015,8 @@ export default function App() {
             onLogOnBike={handleLogOnBike}
             onSaveOnBikeLog={handleSaveOnBikeLog}
             onCompleteRide={handleCompleteRide}
+            onSaveSession={handleSaveSession}
+            onDeleteSession={handleDeleteSession}
             onNavigateTab={setActiveTab}
           />
         )}
@@ -980,6 +1039,7 @@ export default function App() {
             profile={state.profile}
             biometricsSummary={biometricsSummary}
             onSaveSession={handleSaveSession}
+            onDeleteSession={handleDeleteSession}
             onNavigateTab={setActiveTab}
           />
         )}

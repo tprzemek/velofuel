@@ -1,6 +1,8 @@
 // Direct browser client for Intervals.icu REST API (CORS-enabled by intervals.icu)
 // Pulls Rider Profile (FTP, height, age, sex), Withings/wellness data, completed rides, and planned workouts.
 
+import { normalizeSportKind } from './fuelingEngine';
+
 function formatDate(d) {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -132,10 +134,10 @@ export async function syncIntervalsDirect({ athleteId = '0', apiKey, daysBack = 
 
   let stravaRestrictedCount = 0;
 
-  const rawCompleted = (Array.isArray(activitiesRaw) ? activitiesRaw : [])
+  const completedSessions = (Array.isArray(activitiesRaw) ? activitiesRaw : [])
     .filter((a) => {
       if (!a) return false;
-      if (a.source === 'STRAVA' && !a.moving_time && !a.icu_joules) {
+      if (a.source === 'STRAVA' && !a.moving_time && !a.icu_joules && !a.calories) {
         stravaRestrictedCount += 1;
         return false;
       }
@@ -145,84 +147,108 @@ export async function syncIntervalsDirect({ athleteId = '0', apiKey, daysBack = 
       const date = String(a.start_date_local || a.start_date || '').slice(0, 10);
       const movingSecs = Number(a.moving_time || a.elapsed_time || 0);
       const durationMin = Math.round(movingSecs / 60);
+      const sport = a.type || 'Ride';
+      const title = a.name || sport || 'Completed Workout';
+      const sportKind = normalizeSportKind(sport, title);
       const avgWatts = Number(a.icu_average_watts || a.average_watts || 0);
-      const actualKj = a.icu_joules
-        ? Math.round(a.icu_joules / 1000)
-        : a.joules
-        ? Math.round(a.joules / 1000)
-        : avgWatts > 0 && movingSecs > 0
-        ? Math.round((avgWatts * movingSecs) / 1000)
-        : a.calories
-        ? Math.round(a.calories)
-        : 0;
+      // Only cycling activities have power-meter kJ; gym/run/swim store calories in actualKcal!
+      const actualKj =
+        sportKind === 'ride'
+          ? a.icu_joules
+            ? Math.round(a.icu_joules / 1000)
+            : a.joules
+            ? Math.round(a.joules / 1000)
+            : avgWatts > 0 && movingSecs > 0
+            ? Math.round((avgWatts * movingSecs) / 1000)
+            : 0
+          : 0;
+      const actualKcal = Number(a.calories || 0) > 0 ? Math.round(Number(a.calories)) : 0;
       const carbsIngested = Number(a.carbs_ingested || 0) > 0 ? Math.round(Number(a.carbs_ingested)) : 0;
       const startHour = Number(String(a.start_date_local || '09:00').slice(11, 13)) || 9;
       return {
         id: `icu-act-${a.id}`,
+        rawId: String(a.id),
+        pairedEventId: a.paired_event_id ? `icu-evt-${a.paired_event_id}` : null,
         date,
-        title: a.name || a.type || 'Completed Ride',
-        sport: a.type || 'Ride',
+        title,
+        sport,
         status: 'completed',
-        durationMin,
+        durationMin: durationMin || (actualKcal > 0 ? 45 : 0),
         intensity: inferIntensity(a),
         actualKj,
         plannedKj: actualKj,
+        actualKcal,
+        plannedKcal: actualKcal,
         carbsIngested,
         tss: Math.round(a.icu_training_load || 0),
         timing: startHour < 11 ? 'morning' : startHour < 15 ? 'midday' : 'evening',
         source: 'intervals.icu',
       };
     })
-    .filter((s) => s.date);
+    .filter((s) => s.date && s.durationMin > 0);
 
-  // Aggregate multiple completed rides on the same date so double-ride days keep full kJ & minutes
-  const INTENSITY_RANK = { rest: 0, recovery: 1, endurance: 2, tempo: 3, sweetspot: 4, threshold: 5, vo2max: 6, race: 7 };
-  const completedByDate = new Map();
-  for (const s of rawCompleted) {
-    const existing = completedByDate.get(s.date);
-    if (!existing) {
-      completedByDate.set(s.date, { ...s });
-    } else {
-      const higherIntensity =
-        (INTENSITY_RANK[s.intensity] || 0) >= (INTENSITY_RANK[existing.intensity] || 0)
-          ? s.intensity
-          : existing.intensity;
-      completedByDate.set(s.date, {
-        ...existing,
-        title: `${existing.title} + ${s.title}`,
-        durationMin: existing.durationMin + s.durationMin,
-        actualKj: existing.actualKj + s.actualKj,
-        plannedKj: existing.plannedKj + s.plannedKj,
-        carbsIngested: (existing.carbsIngested || 0) + (s.carbsIngested || 0),
-        tss: existing.tss + s.tss,
-        intensity: higherIntensity,
-      });
-    }
+  // Build explicit paired-event ID set + 1-to-1 same-date/same-sport consumption pool
+  // so a completed morning Gym workout NEVER hides an uncompleted afternoon Ride!
+  const explicitlyPairedEventIds = new Set(
+    completedSessions.map((c) => c.pairedEventId).filter(Boolean)
+  );
+  const completedActivityIds = new Set(completedSessions.map((c) => c.id));
+  const unmatchedCompletedByDateSport = new Map();
+  for (const c of completedSessions) {
+    if (c.pairedEventId) continue;
+    const key = `${c.date}|${normalizeSportKind(c.sport, c.title)}`;
+    unmatchedCompletedByDateSport.set(key, (unmatchedCompletedByDateSport.get(key) || 0) + 1);
   }
-  const completedSessions = Array.from(completedByDate.values());
 
-  const plannedSessions = (Array.isArray(eventsRaw) ? eventsRaw : [])
+  const rawPlanned = (Array.isArray(eventsRaw) ? eventsRaw : [])
     .filter((e) => e && e.start_date_local)
     .map((e) => {
       const date = String(e.start_date_local).slice(0, 10);
+      const sport = e.type || 'Ride';
+      const title = e.name || 'Planned Workout';
+      const sportKind = normalizeSportKind(sport, title);
       const durationMin = Math.round((e.moving_time || e.workout_doc?.duration || 0) / 60);
-      const plannedKj = e.joules ? Math.round(e.joules / 1000) : e.icu_joules ? Math.round(e.icu_joules / 1000) : 0;
+      const plannedKj =
+        sportKind === 'ride'
+          ? e.joules
+            ? Math.round(e.joules / 1000)
+            : e.icu_joules
+            ? Math.round(e.icu_joules / 1000)
+            : 0
+          : 0;
+      const plannedKcal = Number(e.calories || 0) > 0 ? Math.round(Number(e.calories)) : 0;
       const startHour = Number(String(e.start_date_local || '17:00').slice(11, 13)) || 17;
       return {
         id: `icu-evt-${e.id}`,
+        pairedActivityId: e.paired_activity_id ? `icu-act-${e.paired_activity_id}` : null,
         date,
-        title: e.name || 'Planned Workout',
-        sport: e.type || 'Ride',
+        title,
+        sport,
         status: 'planned',
         durationMin: durationMin || 60,
         intensity: inferIntensity(e),
         plannedKj,
         actualKj: 0,
+        plannedKcal,
+        actualKcal: 0,
         tss: Math.round(e.icu_training_load || 0),
         timing: startHour < 11 ? 'morning' : startHour < 15 ? 'midday' : 'evening',
         source: 'intervals.icu',
       };
     });
+
+  // Keep every planned workout that has NOT already been completed/paired
+  const plannedSessions = rawPlanned.filter((evt) => {
+    if (explicitlyPairedEventIds.has(evt.id)) return false;
+    if (evt.pairedActivityId && completedActivityIds.has(evt.pairedActivityId)) return false;
+    const key = `${evt.date}|${normalizeSportKind(evt.sport, evt.title)}`;
+    const avail = unmatchedCompletedByDateSport.get(key) || 0;
+    if (avail > 0) {
+      unmatchedCompletedByDateSport.set(key, avail - 1);
+      return false;
+    }
+    return true;
+  });
 
   return {
     ok: true,

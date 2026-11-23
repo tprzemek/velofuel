@@ -282,6 +282,81 @@ def run_qa():
             assert page.locator("svg[aria-label='Morning weight and 7-day trend chart']").is_visible()
             print("PASS 8: Staples, Week, Sync, Mixed Units, and Body tab verified")
 
+            # 9. Multiple workouts in one day: Completed Morning Gym + Scheduled Evening Ride (UI + Intervals.icu Sync)
+            nav.get_by_role("button", name="Today").click()
+            hero_kcal_before = int(
+                page.locator(".hero-kcal-sub").inner_text().split("/")[1].split("kcal")[0].replace(",", "").strip()
+            )
+            page.get_by_role("button", name="+ Workout").click()
+            page.get_by_role("button", name="+ Gym / Strength").click()
+            page.get_by_role("button", name="Add Workout & Recalculate Day").click()
+
+            assert page.locator(".meal-slot.training-card").count() == 2, "Expected 2 workout cards (Gym + Ride)"
+            gym_card = page.locator(".meal-slot.training-card", has=page.locator(".meal-slot-name", has_text="Gym / Strength"))
+            assert gym_card.get_by_text("Completed").is_visible()
+            assert gym_card.get_by_text("+270 kcal").is_visible()
+            assert gym_card.get_by_text("Planned Rate").count() == 0, "Gym card must NOT show cycling g/h rate!"
+            ride_card = page.locator(".meal-slot.training-card", has=page.locator(".meal-slot-name", has_text="Threshold 3×15m"))
+            assert ride_card.is_visible(), "Scheduled Ride card must remain visible alongside completed Gym!"
+
+            hero_kcal_after = int(
+                page.locator(".hero-kcal-sub").inner_text().split("/")[1].split("kcal")[0].replace(",", "").strip()
+            )
+            assert hero_kcal_after > hero_kcal_before, (
+                f"Adding Gym workout must increase daily calorie target ({hero_kcal_before} -> {hero_kcal_after})"
+            )
+
+            # Verify Week tab shows 2 Workouts on Today
+            nav.get_by_role("button", name="Week").click()
+            assert page.get_by_text("2 Workouts").first.is_visible()
+            nav.get_by_role("button", name="Today").click()
+
+            # Remove only Gym workout -> Ride stays!
+            page.get_by_role("button", name="Remove Gym / Strength workout").click()
+            assert page.locator(".meal-slot.training-card").count() == 1
+
+            # Mock Intervals.icu returning Completed Morning Gym + Uncompleted Scheduled Evening Ride on Today
+            today_iso = page.evaluate(
+                "(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; })()"
+            )
+
+            def handle_icu_route(route):
+                url = route.request.url
+                if "/activities" in url:
+                    route.fulfill(
+                        status=200,
+                        content_type="application/json",
+                        body=f'[{{"id": 9001, "name": "Morning Strength Gym", "type": "WeightTraining", "start_date_local": "{today_iso}T07:30:00", "moving_time": 2700, "calories": 310}}]',
+                    )
+                elif "/events" in url:
+                    route.fulfill(
+                        status=200,
+                        content_type="application/json",
+                        body=f'[{{"id": 8002, "name": "Evening Sweet Spot Ride", "type": "Ride", "start_date_local": "{today_iso}T17:30:00", "moving_time": 5400, "joules": 1150000, "icu_training_load": 88}}]',
+                    )
+                elif "/wellness" in url:
+                    route.fulfill(status=200, content_type="application/json", body="[]")
+                else:
+                    route.fulfill(status=200, content_type="application/json", body='{"name":"Test Rider","ftp":300}')
+
+            page.route("https://intervals.icu/api/v1/athlete/**", handle_icu_route)
+            nav.get_by_role("button", name="Sync").click()
+            page.get_by_label("Personal API Key").fill("dummy-test-key")
+            page.get_by_role("button", name="Sync Intervals.icu Now").click()
+            page.get_by_text("Pulled FTP 300W").wait_for(state="visible", timeout=5000)
+
+            nav.get_by_role("button", name="Today").click()
+            assert page.locator(".meal-slot.training-card").count() == 2, (
+                "Intervals.icu sync MUST keep BOTH completed Gym AND scheduled Ride!"
+            )
+            icu_gym = page.locator(".meal-slot.training-card", has=page.locator(".meal-slot-name", has_text="Morning Strength Gym"))
+            icu_ride = page.locator(".meal-slot.training-card", has=page.locator(".meal-slot-name", has_text="Evening Sweet Spot Ride"))
+            assert icu_gym.get_by_text("Completed").is_visible()
+            assert icu_gym.get_by_text("+310 kcal").is_visible()
+            assert icu_ride.get_by_text("Scheduled").is_visible()
+            assert icu_ride.get_by_text("1150 kJ").is_visible()
+            print("PASS 9: Multi-workout day (Completed Gym + Scheduled Ride) verified via both UI and Intervals.icu sync")
+
             browser.close()
     finally:
         server.terminate()
@@ -289,7 +364,7 @@ def run_qa():
 
     assert not console_errors, f"Console errors detected: {console_errors}"
     assert not page_errors, f"Uncaught page errors detected: {page_errors}"
-    print("ALL 8 QA SUITES PASSED (0 console errors, 0 page errors)!")
+    print("ALL 9 QA SUITES PASSED (0 console errors, 0 page errors)!")
 
 
 if __name__ == "__main__":
