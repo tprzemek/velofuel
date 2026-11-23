@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   Bike,
   CheckCircle2,
@@ -17,11 +17,65 @@ import {
   Sparkles,
   Pencil,
   RefreshCw,
+  GripVertical,
+  ArrowUp,
+  ArrowDown,
+  Lightbulb,
 } from 'lucide-react';
-import { BOTTLE_SIZE_OPTIONS, scaleStapleToTargets, sumDailyLogs } from '../engine/fuelingEngine';
+import {
+  BOTTLE_SIZE_OPTIONS,
+  suggestMealForSlot,
+  sumDailyLogs,
+} from '../engine/fuelingEngine';
 import { formatFoodAmount, formatLiquid, formatSodiumPractical } from '../engine/units';
 import NumericInput from './NumericInput';
 import BarcodeScannerModal from './BarcodeScannerModal';
+
+function CalorieRing({ eaten, target }) {
+  const ratio = Math.min(1, Math.max(0, eaten / Math.max(target, 1)));
+  const size = 74;
+  const stroke = 7;
+  const r = (size - stroke) / 2;
+  const circ = 2 * Math.PI * r;
+  const dashOffset = circ * (1 - ratio);
+  const pctNum = Math.round((eaten / Math.max(target, 1)) * 100);
+
+  return (
+    <div className="hero-ring-wrap" aria-label={`${pctNum}% of daily calories logged`}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          stroke="rgba(255,255,255,0.14)"
+          strokeWidth={stroke}
+        />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          stroke={pctNum > 108 ? '#F7C76B' : '#32E09D'}
+          strokeWidth={stroke}
+          strokeLinecap="round"
+          strokeDasharray={circ}
+          strokeDashoffset={dashOffset}
+          transform={`rotate(-90 ${size / 2} ${size / 2})`}
+          style={{ transition: 'stroke-dashoffset 0.35s ease' }}
+        />
+      </svg>
+      <div className="hero-ring-label">
+        <div className="mono" style={{ fontSize: '0.92rem', fontWeight: 800, color: '#fff' }}>
+          {pctNum}%
+        </div>
+        <div style={{ fontSize: '0.58rem', fontWeight: 700, color: 'rgba(248,247,244,0.62)', textTransform: 'uppercase' }}>
+          fueled
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function TodayView({
   plan,
@@ -43,6 +97,7 @@ export default function TodayView({
   onSaveSlotAsStaple,
   onLogDailyStack,
   onSetRideBottleSize,
+  onReorderTimeline,
   onDeleteLog,
   onLogOnBike,
   onSaveOnBikeLog,
@@ -55,6 +110,10 @@ export default function TodayView({
     .filter((l) => l.slot === 'on_bike')
     .reduce((sum, l) => sum + (Number(l.carbs) || 0), 0);
 
+  // Bottle size default vs this-ride-only toggle
+  const [bottleAsDefault, setBottleAsDefault] = useState(true);
+
+  // Complete / Edit Ride form state
   const [editingActual, setEditingActual] = useState(false);
   const [actualKjInput, setActualKjInput] = useState(session?.actualKj || plan.exerciseKj || 0);
   const [actualMinInput, setActualMinInput] = useState(session?.durationMin || 60);
@@ -69,6 +128,7 @@ export default function TodayView({
   const [completeScannedItems, setCompleteScannedItems] = useState([]);
   const [syncRideCarbsOnComplete, setSyncRideCarbsOnComplete] = useState(true);
 
+  // Inline Actual On-Bike Fuel editor state
   const [editingOnBike, setEditingOnBike] = useState(false);
   const [editingOnBikeId, setEditingOnBikeId] = useState(null);
   const [onBikeCarbsInput, setOnBikeCarbsInput] = useState(plan.onBikePlan?.totalCarbs ?? 0);
@@ -78,8 +138,17 @@ export default function TodayView({
   const [onBikeBottlesInput, setOnBikeBottlesInput] = useState(plan.onBikePlan?.bottles ?? 1);
   const [onBikeScannedItems, setOnBikeScannedItems] = useState([]);
 
-  // Direct barcode scanner target inside ride fuel editors ('onbike' | 'complete' | null)
+  // Direct barcode scanner inside ride fuel editors ('onbike' | 'complete' | null)
   const [rideScannerTarget, setRideScannerTarget] = useState(null);
+
+  // Expandable Suggested Meal per slot (hidden by default so meal cards stay clean!)
+  const [openSuggestionSlot, setOpenSuggestionSlot] = useState(null);
+
+  // Pointer-based drag-and-drop timeline card reorder state (works on iOS, Android & Desktop)
+  const [draggedSlot, setDraggedSlot] = useState(null);
+  const [dragOverSlot, setDragOverSlot] = useState(null);
+  const dragSourceRef = useRef(null);
+  const dragTargetRef = useRef(null);
 
   const totals = sumDailyLogs(logs);
   const remaining = {
@@ -92,6 +161,30 @@ export default function TodayView({
   };
 
   const pct = (val, target) => Math.min(100, Math.max(0, Math.round((val / Math.max(target, 1)) * 100)));
+
+  const currentOrder = plan.meals.map((m) => m.slot);
+
+  const moveCard = (fromSlot, toIndex) => {
+    const order = [...currentOrder];
+    const fromIndex = order.indexOf(fromSlot);
+    if (fromIndex < 0 || toIndex < 0 || toIndex >= order.length || fromIndex === toIndex) return;
+    order.splice(fromIndex, 1);
+    order.splice(toIndex, 0, fromSlot);
+    onReorderTimeline(plan.date, order);
+  };
+
+  const finishPointerDrag = () => {
+    const src = dragSourceRef.current;
+    const tgt = dragTargetRef.current;
+    if (src && tgt && src !== tgt) {
+      const targetIdx = currentOrder.indexOf(tgt);
+      moveCard(src, targetIdx);
+    }
+    dragSourceRef.current = null;
+    dragTargetRef.current = null;
+    setDraggedSlot(null);
+    setDragOverSlot(null);
+  };
 
   const openOnBikeEditor = (entry = null) => {
     setEditingOnBikeId(entry?.id || existingOnBikeLog?.id || null);
@@ -195,52 +288,74 @@ export default function TodayView({
   const loggedSuppIds = new Set(loggedSuppEntries.map((l) => l.supplementId));
   const unloggedDailyStack = dailyStack.filter((s) => !loggedSuppIds.has(s.id));
 
-  const formatLeftLabel = (diff) =>
-    diff >= 0 ? `${diff}g left` : `+${Math.abs(diff)}g over`;
+  const formatLeftLabel = (diff) => (diff >= 0 ? `${diff}g left` : `+${Math.abs(diff)}g over`);
+
+  // Helper for the Training card quick placement dropdown
+  const nonBikeOrder = currentOrder.filter((id) => id !== 'on_bike');
+  const onBikeIdx = currentOrder.indexOf('on_bike');
+  const placementOptions = [
+    { idx: 0, label: 'Before Breakfast (Early Morning)' },
+    ...nonBikeOrder.map((id, i) => ({
+      idx: i + 1,
+      label: `After ${id.charAt(0).toUpperCase() + id.slice(1)}`,
+    })),
+  ];
+
+  const handleSelectTrainingPlacement = (targetIdx) => {
+    const next = [...nonBikeOrder];
+    next.splice(Math.min(Math.max(0, Number(targetIdx)), next.length), 0, 'on_bike');
+    onReorderTimeline(plan.date, next);
+  };
 
   return (
     <>
-      {/* Hero Daily Periodized Fuel Target */}
+      {/* Modern Hero Daily Telemetry Fuel Card */}
       <section className="card-carbon" aria-label="Daily Fuel Target">
         <div className="hero-top">
-          <div>
-            <span className={`carb-badge-dark ${plan.categoryMeta.color}`}>
-              <Flame size={12} /> {plan.categoryMeta.badge} CARB · {plan.categoryMeta.label}
-            </span>
-            <div className="hero-kcal mono">
-              {totals.kcal.toLocaleString()}
-              <span style={{ fontSize: '1.05rem', fontWeight: 500, color: 'rgba(248,247,244,0.52)' }}>
-                {' '}/ {plan.targets.kcal.toLocaleString()} kcal
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              <span className={`carb-badge-dark ${plan.categoryMeta.color}`}>
+                <Flame size={12} /> {plan.categoryMeta.badge} CARB · {plan.categoryMeta.label}
               </span>
+              <button
+                type="button"
+                className="hero-goal-pill"
+                onClick={() => onNavigateTab('body')}
+                style={{ cursor: 'pointer' }}
+              >
+                {plan.plannedDeficit > 40
+                  ? `Cut -${plan.plannedDeficit}`
+                  : plan.plannedDeficit < -40
+                  ? `Load +${Math.abs(plan.plannedDeficit)}`
+                  : 'Fuel 100%'}
+              </button>
             </div>
-            <div className="hero-kcal-sub">
+            <div className="hero-kcal mono">
               {remaining.kcal >= 0 ? (
                 <>
-                  <strong className="mono" style={{ color: '#fff' }}>{remaining.kcal} kcal</strong> left today
+                  {remaining.kcal.toLocaleString()}
+                  <span style={{ fontSize: '0.96rem', fontWeight: 600, color: 'rgba(248,247,244,0.62)' }}>
+                    {' '}kcal left
+                  </span>
                 </>
               ) : (
                 <>
-                  <strong className="mono" style={{ color: '#F7C77D' }}>+{Math.abs(remaining.kcal)} kcal</strong> over target
+                  <span style={{ color: '#FBD07E' }}>+{Math.abs(remaining.kcal).toLocaleString()}</span>
+                  <span style={{ fontSize: '0.96rem', fontWeight: 600, color: 'rgba(248,247,244,0.62)' }}>
+                    {' '}kcal over
+                  </span>
                 </>
               )}
+            </div>
+            <div className="hero-kcal-sub mono">
+              {totals.kcal.toLocaleString()} / {plan.targets.kcal.toLocaleString()} kcal eaten
               {totals.hasEstimates && (
-                <span className="mono" style={{ color: '#F4BE76' }}> · ±{totals.kcalUncertainty} est band</span>
+                <span style={{ color: '#FBD07E' }}> · ±{totals.kcalUncertainty} est</span>
               )}
             </div>
           </div>
 
-          <button
-            type="button"
-            className="hero-goal-pill"
-            onClick={() => onNavigateTab('body')}
-            style={{ cursor: 'pointer' }}
-          >
-            {plan.plannedDeficit > 40
-              ? `Cut -${plan.plannedDeficit}`
-              : plan.plannedDeficit < -40
-              ? `Load +${Math.abs(plan.plannedDeficit)}`
-              : 'Fuel 100%'}
-          </button>
+          <CalorieRing eaten={totals.kcal} target={plan.targets.kcal} />
         </div>
 
         <div className="macro-bars">
@@ -249,19 +364,14 @@ export default function TodayView({
               <span className="macro-bar-name">Carbs</span>
               <span className="macro-bar-gkg mono">{plan.targets.carbsPerKg}g/kg</span>
             </div>
-            <div className="macro-bar-val mono">
-              {totals.carbs}<span>/{plan.targets.carbs}g</span>
-            </div>
             <div
-              className="mono"
-              style={{
-                fontSize: '0.72rem',
-                fontWeight: 700,
-                marginTop: 2,
-                color: remaining.carbs >= 0 ? '#6CE0AE' : '#F7C77D',
-              }}
+              className="macro-bar-left mono"
+              style={{ color: remaining.carbs >= 0 ? '#5BF0B2' : '#FBD07E' }}
             >
               {formatLeftLabel(remaining.carbs)}
+            </div>
+            <div className="macro-bar-val mono">
+              {totals.carbs}<span>/{plan.targets.carbs}g</span>
             </div>
             <div className="progress-track">
               <div className="progress-fill fill-carb" style={{ width: `${pct(totals.carbs, plan.targets.carbs)}%` }} />
@@ -273,19 +383,14 @@ export default function TodayView({
               <span className="macro-bar-name">Protein</span>
               <span className="macro-bar-gkg mono">{plan.targets.proteinPerKg}g/kg</span>
             </div>
-            <div className="macro-bar-val mono">
-              {totals.protein}<span>/{plan.targets.protein}g</span>
-            </div>
             <div
-              className="mono"
-              style={{
-                fontSize: '0.72rem',
-                fontWeight: 700,
-                marginTop: 2,
-                color: remaining.protein >= 0 ? '#85C5F2' : '#F7C77D',
-              }}
+              className="macro-bar-left mono"
+              style={{ color: remaining.protein >= 0 ? '#7CC8FF' : '#FBD07E' }}
             >
               {formatLeftLabel(remaining.protein)}
+            </div>
+            <div className="macro-bar-val mono">
+              {totals.protein}<span>/{plan.targets.protein}g</span>
             </div>
             <div className="progress-track">
               <div className="progress-fill fill-protein" style={{ width: `${pct(totals.protein, plan.targets.protein)}%` }} />
@@ -297,19 +402,14 @@ export default function TodayView({
               <span className="macro-bar-name">Fat</span>
               <span className="macro-bar-gkg mono">{plan.targets.fatPerKg}g/kg</span>
             </div>
-            <div className="macro-bar-val mono">
-              {totals.fat}<span>/{plan.targets.fat}g</span>
-            </div>
             <div
-              className="mono"
-              style={{
-                fontSize: '0.72rem',
-                fontWeight: 700,
-                marginTop: 2,
-                color: remaining.fat >= 0 ? '#F4BE76' : '#F2A194',
-              }}
+              className="macro-bar-left mono"
+              style={{ color: remaining.fat >= 0 ? '#FBD07E' : '#FCAFA6' }}
             >
               {formatLeftLabel(remaining.fat)}
+            </div>
+            <div className="macro-bar-val mono">
+              {totals.fat}<span>/{plan.targets.fat}g</span>
             </div>
             <div className="progress-track">
               <div className="progress-fill fill-fat" style={{ width: `${pct(totals.fat, plan.targets.fat)}%` }} />
@@ -324,8 +424,8 @@ export default function TodayView({
               <ShieldCheck size={12} style={{ verticalAlign: '-2px', marginRight: 4 }} />
               {plan.energyAvailability < 34 ? 'Low-Fuel Guard Active' : 'Recovery Fuel: Healthy'}
             </span>
-            <span className="mono" style={{ fontSize: '0.68rem', color: 'rgba(248,247,244,0.62)' }}>
-              Off-bike burn ({plan.nonExerciseHours}h): {plan.offBikeTdee} kcal
+            <span className="mono" style={{ fontSize: '0.68rem', color: 'rgba(248,247,244,0.66)' }}>
+              Off-bike ({plan.nonExerciseHours}h): {plan.offBikeTdee} kcal
             </span>
           </div>
         </div>
@@ -351,310 +451,465 @@ export default function TodayView({
         </div>
       )}
 
-      {/* Today's Session + On-Bike Fuel Card */}
-      <section className="card" aria-label="Today's Cycling Session">
-        <div className="session-card-head">
-          <div>
-            <div className="section-kicker" style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
-              <Bike size={13} />
-              {session?.status === 'completed' ? 'Completed Session' : session?.durationMin > 0 ? 'Planned Session' : 'Recovery / Rest'}
-              {session?.source === 'intervals.icu' && session?.status === 'completed' && (
-                <span className="carb-badge high" style={{ fontSize: '0.58rem', padding: '2px 6px' }}>
-                  Auto-pulled · Intervals.icu
-                </span>
-              )}
+      {/* Compact Rest Day Card (when there is no cycling workout today) */}
+      {!plan.onBikePlan && (
+        <section className="card" aria-label="Rest Day Summary">
+          <div className="session-card-head">
+            <div>
+              <div className="section-kicker" style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                <Bike size={13} /> Recovery / Rest Day
+              </div>
+              <h2 className="session-title" style={{ marginTop: 3 }}>
+                {session?.title || 'Rest & Mobility Day'}
+              </h2>
+              <div className="session-meta mono">0 kJ on bike · Smart fat-loss &amp; muscle repair</div>
             </div>
-            <h2 className="session-title" style={{ marginTop: 3 }}>
-              {session?.title || 'Rest & Mobility Day'}
-            </h2>
-            <div className="session-meta mono">
-              {session?.durationMin > 0
-                ? `${session.durationMin} min · ${plan.exerciseKj} kJ (~${plan.exerciseKcal} kcal burned)`
-                : '0 kJ on bike · Smart cut & muscle repair'}
-            </div>
+            <button type="button" className="btn btn-sm" onClick={() => onNavigateTab('training')}>
+              Add Ride
+            </button>
           </div>
+        </section>
+      )}
 
-          <div style={{ display: 'flex', gap: 5, flexShrink: 0 }}>
-            {hasIntervalsConnected && onResyncNow && (
-              <button
-                type="button"
-                className="btn btn-sm"
-                onClick={onResyncNow}
-                disabled={bgSyncing}
-                title="Pull latest completed ride kJ & duration from Intervals.icu"
-              >
-                <RefreshCw size={13} className={bgSyncing ? 'spin' : ''} />
-              </button>
-            )}
-            {session?.durationMin > 0 && (
-              <button
-                type="button"
-                className={`btn btn-sm ${session.status === 'completed' ? 'btn-soft' : 'btn-primary'}`}
-                onClick={() => {
-                  setActualKjInput(session.actualKj || plan.exerciseKj);
-                  setActualMinInput(session.durationMin);
-                  setActualRideCarbsInput(
-                    existingOnBikeLog?.carbs ?? session.carbsIngested ?? plan.onBikePlan?.totalCarbs ?? 0
-                  );
-                  setActualRideProteinInput(existingOnBikeLog?.protein ?? 0);
-                  setActualRideFatInput(existingOnBikeLog?.fat ?? 0);
-                  setActualRideSodiumInput(
-                    existingOnBikeLog?.micros?.sodium ?? plan.onBikePlan?.totalSodiumMg ?? 0
-                  );
-                  setCompleteScannedItems([]);
-                  setEditingActual((v) => !v);
-                }}
-              >
-                <CheckCircle2 size={14} />
-                {session.status === 'completed' ? 'Edit Ride' : 'Complete'}
-              </button>
-            )}
-          </div>
-        </div>
-
-        {editingActual && (
-          <form onSubmit={handleSaveCompletedRide} style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border-hairline)' }}>
-            <div className="field-grid">
-              <div className="field">
-                <label htmlFor="actual-kj">Actual Power Work (kJ)</label>
-                <NumericInput
-                  id="actual-kj"
-                  className="input mono"
-                  value={actualKjInput}
-                  onChange={setActualKjInput}
-                  min={0}
-                  max={8000}
-                  fallback={0}
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="actual-min">Duration (min)</label>
-                <NumericInput
-                  id="actual-min"
-                  className="input mono"
-                  value={actualMinInput}
-                  onChange={setActualMinInput}
-                  min={0}
-                  max={720}
-                  fallback={60}
-                />
-              </div>
-
-              <div className="field full" style={{ marginTop: 2 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                  <label htmlFor="actual-ride-carbs" style={{ margin: 0 }}>
-                    Actual Ride Carbs (g){' '}
-                    <span style={{ fontWeight: 500, color: 'var(--ink-muted)' }}>
-                      (plan: {plan.onBikePlan?.totalCarbs || 0}g)
-                    </span>
-                  </label>
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-soft"
-                    style={{ padding: '4px 8px', fontSize: '0.7rem' }}
-                    onClick={() => setRideScannerTarget('complete')}
-                  >
-                    <ScanBarcode size={13} /> Scan Bar / Gel
-                  </button>
-                </div>
-                <NumericInput
-                  id="actual-ride-carbs"
-                  className="input mono"
-                  value={actualRideCarbsInput}
-                  onChange={setActualRideCarbsInput}
-                  min={0}
-                  max={1000}
-                  fallback={0}
-                />
-              </div>
-
-              <div className="field">
-                <label htmlFor="actual-ride-prot">Ride Protein (g)</label>
-                <NumericInput
-                  id="actual-ride-prot"
-                  className="input mono"
-                  value={actualRideProteinInput}
-                  onChange={setActualRideProteinInput}
-                  min={0}
-                  max={200}
-                  fallback={0}
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="actual-ride-fat">Ride Fat (g)</label>
-                <NumericInput
-                  id="actual-ride-fat"
-                  className="input mono"
-                  value={actualRideFatInput}
-                  onChange={setActualRideFatInput}
-                  min={0}
-                  max={200}
-                  fallback={0}
-                />
-              </div>
-            </div>
-
-            {completeScannedItems.length > 0 && (
-              <div className="chip-row" style={{ marginTop: 8 }}>
-                {completeScannedItems.map((item, idx) => (
-                  <span key={`${item}-${idx}`} className="chip mono" style={{ fontSize: '0.68rem', background: 'var(--code-high-bg)', color: 'var(--code-high)', borderColor: 'transparent' }}>
-                    {item}
-                  </span>
-                ))}
-              </div>
-            )}
-
-            <label
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 7,
-                marginTop: 8,
-                fontSize: '0.75rem',
-                color: 'var(--ink-secondary)',
-                cursor: 'pointer',
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={syncRideCarbsOnComplete}
-                onChange={(e) => setSyncRideCarbsOnComplete(e.target.checked)}
-              />
-              Log actual on-bike fuel &amp; recalculate what&apos;s left today
-            </label>
-            <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-              <button type="submit" className="btn btn-accent btn-sm" style={{ flex: 1 }}>
-                Save & Recalculate Remaining Meals
-              </button>
-              <button type="button" className="btn btn-sm" onClick={() => setEditingActual(false)}>
-                Cancel
-              </button>
-            </div>
-          </form>
-        )}
-
-        {plan.onBikePlan && (
-          <>
-            <div className="on-bike-grid">
-              <div className="mini-stat">
-                <div className="mini-stat-label">On-Bike Carbs</div>
-                <div className="mini-stat-val mono" style={{ color: 'var(--code-high)' }}>
-                  {plan.onBikePlan.carbsPerHour} g/h
-                </div>
-              </div>
-              <div className="mini-stat">
-                <div className="mini-stat-label">
-                  {hasAnyOnBikeLog ? 'Actual / Plan' : 'Total Ride Fuel'}
-                </div>
-                <div className="mini-stat-val mono">
-                  {hasAnyOnBikeLog
-                    ? `${loggedOnBikeCarbs} / ${plan.onBikePlan.totalCarbs}g`
-                    : `${plan.onBikePlan.totalCarbs} g`}
-                </div>
-              </div>
-              <div className="mini-stat">
-                <div className="mini-stat-label">Bottles Needed</div>
-                <div className="mini-stat-val mono">
-                  {plan.onBikePlan.bottles}× {plan.onBikePlan.bottleLabel}
-                </div>
-              </div>
-            </div>
-
-            {/* Per-Ride Bottle Size Selector */}
-            <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--ink-secondary)' }}>
-                Bottle size for this ride:
-              </span>
-              <div className="chip-row" role="group" aria-label="Ride bottle size">
-                {BOTTLE_SIZE_OPTIONS.map((ml) => {
-                  const active = plan.onBikePlan.bottleSizeMl === ml;
-                  return (
-                    <button
-                      key={ml}
-                      type="button"
-                      className="chip mono"
-                      style={{
-                        padding: '4px 8px',
-                        fontSize: '0.7rem',
-                        ...(active
-                          ? { background: 'var(--bg-carbon)', color: '#fff', borderColor: 'var(--bg-carbon)' }
-                          : {}),
-                      }}
-                      onClick={() => onSetRideBottleSize(plan.date, ml)}
-                    >
-                      {formatLiquid(ml, units)}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <p className="muted-text" style={{ marginTop: 8, fontSize: '0.75rem' }}>
-              <Droplets size={12} style={{ verticalAlign: '-2px', marginRight: 4 }} />
-              {plan.onBikePlan.note}
-            </p>
-          </>
-        )}
-
-        {(plan.timingCoaching?.preRideCue || plan.timingCoaching?.postRideCue) && (
-          <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border-hairline)', display: 'flex', flexDirection: 'column', gap: 5 }}>
-            {plan.timingCoaching.preRideCue && (
-              <p className="muted-text" style={{ fontSize: '0.74rem' }}>
-                <strong>Pre-Ride:</strong> {plan.timingCoaching.preRideCue}
-              </p>
-            )}
-            {plan.timingCoaching.postRideCue && (
-              <p className="muted-text" style={{ fontSize: '0.74rem' }}>
-                <strong>Post-Ride:</strong> {plan.timingCoaching.postRideCue}
-              </p>
-            )}
-          </div>
-        )}
-      </section>
-
-      {/* Meal-by-Meal Carb Coded Timeline */}
-      <section aria-label="Meal Plan and Food Log">
+      {/* Draggable Daily Timeline (Meals + Training Card freely reorderable!) */}
+      <section aria-label="Meal Plan and Training Timeline">
         <div className="section-header" style={{ padding: '0 2px' }}>
-          <h2 className="section-title">Daily Meal Timeline</h2>
-          <span className="section-kicker">Barcode · Saved Meals · Work AI</span>
+          <h2 className="section-title">Daily Fuel &amp; Training Timeline</h2>
+          <span className="section-kicker">Drag cards to reorder</span>
         </div>
 
         <div className="meal-list">
-          {plan.meals.map((slot) => {
+          {plan.meals.map((slot, idx) => {
             const slotLogs = logs.filter((l) => l.slot === slot.slot);
             const isOnBike = slot.slot === 'on_bike';
             const codeClass = slot.carbCode.toLowerCase();
-            const pinnedStaple = !isOnBike ? staples.find((s) => s.dailySlot === slot.slot) : null;
-            const pinnedPreview = pinnedStaple
-              ? scaleStapleToTargets(pinnedStaple, slot.targetCarbs, slot.targetProtein)
-              : null;
+            const isDragging = draggedSlot === slot.slot;
+            const isDragOver = dragOverSlot === slot.slot && draggedSlot !== slot.slot;
             const canSaveAsStaple =
               !isOnBike && slotLogs.length > 0 && slotLogs.some((l) => l.type === 'food' && l.ingredient);
             const onBikeDelta = isOnBike ? (Number(onBikeCarbsInput) || 0) - slot.targetCarbs : 0;
+            const suggestionOpen = !isOnBike && openSuggestionSlot === slot.slot;
+            const suggestion = suggestionOpen
+              ? suggestMealForSlot(slot, staples, plan.category, slot.slot === 'dinner' ? remaining : null)
+              : null;
 
             return (
-              <div className="meal-slot" key={slot.slot}>
+              <div
+                key={slot.slot}
+                data-slot={slot.slot}
+                className={`meal-slot ${isOnBike ? 'training-card' : `code-${codeClass}`} ${
+                  isDragging ? 'dragging' : ''
+                } ${isDragOver ? 'drag-over' : ''}`}
+              >
+                {/* Card Header with Pointer Drag Handle (iOS, Android & Desktop) & Reorder Buttons */}
                 <div className="meal-slot-head">
                   <div className="meal-slot-title-group">
-                    <span className="meal-slot-name">{slot.label}</span>
+                    <span
+                      className="drag-handle"
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`Drag ${isOnBike ? 'Training' : slot.label} card to reorder`}
+                      title="Drag card to reorder"
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        e.currentTarget.setPointerCapture?.(e.pointerId);
+                        dragSourceRef.current = slot.slot;
+                        dragTargetRef.current = slot.slot;
+                        setDraggedSlot(slot.slot);
+                        setDragOverSlot(slot.slot);
+                      }}
+                      onPointerMove={(e) => {
+                        if (!dragSourceRef.current) return;
+                        const el = document.elementFromPoint(e.clientX, e.clientY)?.closest('[data-slot]');
+                        const hovered = el?.getAttribute('data-slot');
+                        if (hovered && hovered !== dragTargetRef.current) {
+                          dragTargetRef.current = hovered;
+                          setDragOverSlot(hovered);
+                        }
+                      }}
+                      onPointerUp={() => finishPointerDrag()}
+                      onPointerCancel={() => finishPointerDrag()}
+                    >
+                      <GripVertical size={16} />
+                    </span>
+                    {isOnBike && <Bike size={16} color="var(--code-high)" />}
+                    <span className="meal-slot-name">
+                      {isOnBike ? session?.title || 'Training Session' : slot.label}
+                    </span>
                     <span className={`carb-badge ${codeClass}`}>{slot.carbCode}</span>
                   </div>
-                  <span className="meal-slot-time">{slot.timeHint}</span>
+
+                  <div className="reorder-controls">
+                    <button
+                      type="button"
+                      className="reorder-btn"
+                      disabled={idx === 0}
+                      onClick={() => moveCard(slot.slot, idx - 1)}
+                      aria-label={`Move ${isOnBike ? 'Training' : slot.label} up`}
+                      title="Move up"
+                    >
+                      <ArrowUp size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      className="reorder-btn"
+                      disabled={idx === plan.meals.length - 1}
+                      onClick={() => moveCard(slot.slot, idx + 1)}
+                      aria-label={`Move ${isOnBike ? 'Training' : slot.label} down`}
+                      title="Move down"
+                    >
+                      <ArrowDown size={13} />
+                    </button>
+                  </div>
                 </div>
 
-                <div className="meal-target-line mono">
-                  <span>
-                    Prescribed: <strong>{slot.targetCarbs}g C</strong>
-                  </span>
-                  {!isOnBike && (
-                    <>
-                      <span><strong>{slot.targetProtein}g P</strong></span>
-                      <span>{slot.targetFat}g F</span>
-                    </>
-                  )}
-                  <span style={{ color: 'var(--ink-muted)' }}>{slot.targetKcal} kcal</span>
-                </div>
+                {/* TRAINING & ON-BIKE FUEL CARD BODY */}
+                {isOnBike && plan.onBikePlan ? (
+                  <>
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        gap: 8,
+                        marginTop: 6,
+                        flexWrap: 'wrap',
+                      }}
+                    >
+                      <div className="session-meta mono" style={{ margin: 0 }}>
+                        {session?.durationMin} min · {plan.exerciseKj} kJ (~{plan.exerciseKcal} kcal burned)
+                        {session?.source === 'intervals.icu' && session?.status === 'completed' && (
+                          <span className="carb-badge high" style={{ fontSize: '0.58rem', padding: '2px 6px', marginLeft: 6 }}>
+                            Auto-pulled
+                          </span>
+                        )}
+                      </div>
 
+                      <div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+                        {hasIntervalsConnected && onResyncNow && (
+                          <button
+                            type="button"
+                            className="btn btn-sm"
+                            onClick={onResyncNow}
+                            disabled={bgSyncing}
+                            title="Pull latest completed ride kJ & duration from Intervals.icu"
+                          >
+                            <RefreshCw size={13} className={bgSyncing ? 'spin' : ''} />
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className={`btn btn-sm ${session?.status === 'completed' ? 'btn-soft' : 'btn-primary'}`}
+                          onClick={() => {
+                            setActualKjInput(session?.actualKj || plan.exerciseKj);
+                            setActualMinInput(session?.durationMin || 60);
+                            setActualRideCarbsInput(
+                              existingOnBikeLog?.carbs ?? session?.carbsIngested ?? plan.onBikePlan?.totalCarbs ?? 0
+                            );
+                            setActualRideProteinInput(existingOnBikeLog?.protein ?? 0);
+                            setActualRideFatInput(existingOnBikeLog?.fat ?? 0);
+                            setActualRideSodiumInput(
+                              existingOnBikeLog?.micros?.sodium ?? plan.onBikePlan?.totalSodiumMg ?? 0
+                            );
+                            setCompleteScannedItems([]);
+                            setEditingActual((v) => !v);
+                          }}
+                        >
+                          <CheckCircle2 size={14} />
+                          {session?.status === 'completed' ? 'Edit Ride' : 'Complete'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Quick Placement Selector for Training Card */}
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 8,
+                        marginTop: 9,
+                      }}
+                    >
+                      <label
+                        htmlFor="training-placement"
+                        style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--ink-secondary)', whiteSpace: 'nowrap' }}
+                      >
+                        Workout placement:
+                      </label>
+                      <select
+                        id="training-placement"
+                        className="select"
+                        style={{ padding: '5px 9px', fontSize: '0.75rem', fontWeight: 700, maxWidth: 220 }}
+                        value={onBikeIdx}
+                        onChange={(e) => handleSelectTrainingPlacement(Number(e.target.value))}
+                      >
+                        {placementOptions.map((opt) => (
+                          <option key={opt.idx} value={opt.idx}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {editingActual && (
+                      <form
+                        onSubmit={handleSaveCompletedRide}
+                        style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border-hairline)' }}
+                      >
+                        <div className="field-grid">
+                          <div className="field">
+                            <label htmlFor="actual-kj">Actual Power Work (kJ)</label>
+                            <NumericInput
+                              id="actual-kj"
+                              className="input mono"
+                              value={actualKjInput}
+                              onChange={setActualKjInput}
+                              min={0}
+                              max={8000}
+                              fallback={0}
+                            />
+                          </div>
+                          <div className="field">
+                            <label htmlFor="actual-min">Duration (min)</label>
+                            <NumericInput
+                              id="actual-min"
+                              className="input mono"
+                              value={actualMinInput}
+                              onChange={setActualMinInput}
+                              min={0}
+                              max={720}
+                              fallback={60}
+                            />
+                          </div>
+
+                          <div className="field full" style={{ marginTop: 2 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                              <label htmlFor="actual-ride-carbs" style={{ margin: 0 }}>
+                                Actual Ride Carbs (g){' '}
+                                <span style={{ fontWeight: 500, color: 'var(--ink-muted)' }}>
+                                  (plan: {plan.onBikePlan.totalCarbs}g)
+                                </span>
+                              </label>
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-soft"
+                                style={{ padding: '4px 8px', fontSize: '0.7rem' }}
+                                onClick={() => setRideScannerTarget('complete')}
+                              >
+                                <ScanBarcode size={13} /> Scan Bar / Gel
+                              </button>
+                            </div>
+                            <NumericInput
+                              id="actual-ride-carbs"
+                              className="input mono"
+                              value={actualRideCarbsInput}
+                              onChange={setActualRideCarbsInput}
+                              min={0}
+                              max={1000}
+                              fallback={0}
+                            />
+                          </div>
+
+                          <div className="field">
+                            <label htmlFor="actual-ride-prot">Ride Protein (g)</label>
+                            <NumericInput
+                              id="actual-ride-prot"
+                              className="input mono"
+                              value={actualRideProteinInput}
+                              onChange={setActualRideProteinInput}
+                              min={0}
+                              max={200}
+                              fallback={0}
+                            />
+                          </div>
+                          <div className="field">
+                            <label htmlFor="actual-ride-fat">Ride Fat (g)</label>
+                            <NumericInput
+                              id="actual-ride-fat"
+                              className="input mono"
+                              value={actualRideFatInput}
+                              onChange={setActualRideFatInput}
+                              min={0}
+                              max={200}
+                              fallback={0}
+                            />
+                          </div>
+                        </div>
+
+                        {completeScannedItems.length > 0 && (
+                          <div className="chip-row" style={{ marginTop: 8 }}>
+                            {completeScannedItems.map((item, sIdx) => (
+                              <span
+                                key={`${item}-${sIdx}`}
+                                className="chip mono"
+                                style={{ fontSize: '0.68rem', background: 'var(--code-high-bg)', color: 'var(--code-high)', borderColor: 'transparent' }}
+                              >
+                                {item}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        <label
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 7,
+                            marginTop: 8,
+                            fontSize: '0.75rem',
+                            color: 'var(--ink-secondary)',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={syncRideCarbsOnComplete}
+                            onChange={(e) => setSyncRideCarbsOnComplete(e.target.checked)}
+                          />
+                          Log actual on-bike fuel &amp; recalculate what&apos;s left today
+                        </label>
+                        <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                          <button type="submit" className="btn btn-accent btn-sm" style={{ flex: 1 }}>
+                            Save &amp; Recalculate Remaining Meals
+                          </button>
+                          <button type="button" className="btn btn-sm" onClick={() => setEditingActual(false)}>
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
+                    )}
+
+                    {/* Prominent Prescribed On-Bike Numbers */}
+                    <div className="on-bike-grid">
+                      <div className="mini-stat" style={{ background: 'rgba(255,255,255,0.82)' }}>
+                        <div className="mini-stat-label">Planned Rate</div>
+                        <div className="mini-stat-val mono" style={{ color: 'var(--code-high)' }}>
+                          {plan.onBikePlan.carbsPerHour} g/h
+                        </div>
+                      </div>
+                      <div className="mini-stat" style={{ background: 'rgba(255,255,255,0.82)' }}>
+                        <div className="mini-stat-label">
+                          {hasAnyOnBikeLog ? 'Actual / Plan' : 'Planned Carbs'}
+                        </div>
+                        <div className="mini-stat-val mono">
+                          {hasAnyOnBikeLog
+                            ? `${loggedOnBikeCarbs} / ${plan.onBikePlan.totalCarbs}g`
+                            : `${plan.onBikePlan.totalCarbs} g`}
+                        </div>
+                      </div>
+                      <div className="mini-stat" style={{ background: 'rgba(255,255,255,0.82)' }}>
+                        <div className="mini-stat-label">Bottles</div>
+                        <div className="mini-stat-val mono">
+                          {plan.onBikePlan.bottles}× {plan.onBikePlan.bottleLabel}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Bottle Size Selector (Default for all rides OR This ride only) */}
+                    <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--ink-secondary)' }}>
+                          Bottle size:
+                        </span>
+                        <div style={{ display: 'inline-flex', gap: 4 }}>
+                          <button
+                            type="button"
+                            className="chip"
+                            style={{
+                              padding: '2px 8px',
+                              fontSize: '0.66rem',
+                              ...(bottleAsDefault
+                                ? { background: 'var(--code-high)', color: '#fff', borderColor: 'var(--code-high)' }
+                                : {}),
+                            }}
+                            onClick={() => setBottleAsDefault(true)}
+                          >
+                            Save as default
+                          </button>
+                          <button
+                            type="button"
+                            className="chip"
+                            style={{
+                              padding: '2px 8px',
+                              fontSize: '0.66rem',
+                              ...(!bottleAsDefault
+                                ? { background: 'var(--bg-carbon)', color: '#fff', borderColor: 'var(--bg-carbon)' }
+                                : {}),
+                            }}
+                            onClick={() => setBottleAsDefault(false)}
+                          >
+                            This ride only
+                          </button>
+                        </div>
+                      </div>
+                      <div className="chip-row" role="group" aria-label="Ride bottle size">
+                        {BOTTLE_SIZE_OPTIONS.map((ml) => {
+                          const active = plan.onBikePlan.bottleSizeMl === ml;
+                          return (
+                            <button
+                              key={ml}
+                              type="button"
+                              className="chip mono"
+                              style={{
+                                padding: '4px 9px',
+                                fontSize: '0.72rem',
+                                ...(active
+                                  ? { background: 'var(--bg-carbon)', color: '#fff', borderColor: 'var(--bg-carbon)' }
+                                  : {}),
+                              }}
+                              onClick={() => onSetRideBottleSize(plan.date, ml, bottleAsDefault)}
+                            >
+                              {formatLiquid(ml, units)}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <p className="muted-text" style={{ marginTop: 8, fontSize: '0.75rem' }}>
+                      <Droplets size={12} style={{ verticalAlign: '-2px', marginRight: 4 }} />
+                      {plan.onBikePlan.note}
+                    </p>
+
+                    {(plan.timingCoaching?.preRideCue || plan.timingCoaching?.postRideCue) && (
+                      <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border-hairline)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        {plan.timingCoaching.preRideCue && (
+                          <p className="muted-text" style={{ fontSize: '0.72rem' }}>
+                            <strong>Pre-Ride:</strong> {plan.timingCoaching.preRideCue}
+                          </p>
+                        )}
+                        {plan.timingCoaching.postRideCue && (
+                          <p className="muted-text" style={{ fontSize: '0.72rem' }}>
+                            <strong>Post-Ride:</strong> {plan.timingCoaching.postRideCue}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  /* REGULAR MEAL CARD: Prominent Planned Macros Strip (No meal listed by default!) */
+                  <div className="planned-macro-grid" aria-label={`Planned macros for ${slot.label}`}>
+                    <div className="planned-pill carb">
+                      <span className="planned-pill-label">Carbs</span>
+                      <span className="planned-pill-num mono">{slot.targetCarbs}g</span>
+                    </div>
+                    <div className="planned-pill prot">
+                      <span className="planned-pill-label">Protein</span>
+                      <span className="planned-pill-num mono">{slot.targetProtein}g</span>
+                    </div>
+                    <div className="planned-pill fat">
+                      <span className="planned-pill-label">Fat</span>
+                      <span className="planned-pill-num mono">{slot.targetFat}g</span>
+                    </div>
+                    <div className="planned-pill">
+                      <span className="planned-pill-label">Planned</span>
+                      <span className="planned-pill-num mono">{slot.targetKcal}</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Logged Items (ONLY rendered once the user actually logs food/fuel) */}
                 {slotLogs.length > 0 && (
                   <div className="meal-entries">
                     {slotLogs.map((entry) => (
@@ -663,7 +918,7 @@ export default function TodayView({
                           <div className="logged-item-title">
                             {entry.title}{' '}
                             {entry.uncertaintyPct > 0 && (
-                              <span className="est-tag mono">±{entry.uncertaintyPct}% work est</span>
+                              <span className="est-tag mono">±{entry.uncertaintyPct}% est</span>
                             )}
                           </div>
                           <div className="logged-item-detail">{entry.detail}</div>
@@ -688,7 +943,7 @@ export default function TodayView({
                               className="icon-btn"
                               onClick={() => openOnBikeEditor(entry)}
                               aria-label="Edit actual ride fuel"
-                              title="Modify actual carbs or sodium consumed"
+                              title="Modify actual carbs, protein, fat, or sodium consumed"
                             >
                               <Pencil size={14} />
                             </button>
@@ -707,7 +962,54 @@ export default function TodayView({
                   </div>
                 )}
 
-                {/* Inline Actual On-Bike Fuel Editor (manual Carbs/Protein/Fat/Sodium + barcode scan for bars/gels/mix) */}
+                {/* Optional Suggested Meal Drawer (only shown when user taps "Suggested Meal") */}
+                {suggestionOpen && suggestion && (
+                  <div className="suggestion-box">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                      <div>
+                        <div style={{ fontSize: '0.68rem', fontWeight: 800, color: 'var(--code-high)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                          Suggested {slot.label}
+                        </div>
+                        <div style={{ fontWeight: 800, fontSize: '0.92rem', marginTop: 2 }}>
+                          {suggestion.staple.name}
+                        </div>
+                        <div className="muted-text" style={{ fontSize: '0.73rem', marginTop: 2 }}>
+                          {suggestion.scaled.resolvedItems
+                            .map((i) => `${formatFoodAmount(i.grams, units)} ${i.name}`)
+                            .join(' · ')}
+                        </div>
+                        <div className="mono" style={{ fontSize: '0.73rem', fontWeight: 700, marginTop: 4, color: 'var(--ink-primary)' }}>
+                          {suggestion.scaled.carbs}g C · {suggestion.scaled.protein}g P · {suggestion.scaled.fat}g F · {suggestion.scaled.kcal} kcal
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 7, marginTop: 9 }}>
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-accent"
+                        style={{ flex: 1 }}
+                        onClick={() => {
+                          onQuickLogStaple(slot, suggestion.staple);
+                          setOpenSuggestionSlot(null);
+                        }}
+                      >
+                        <Sparkles size={13} /> Log Suggested
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        onClick={() => {
+                          setOpenSuggestionSlot(null);
+                          onOpenStapleModal(slot, remaining);
+                        }}
+                      >
+                        Adjust Portions
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Inline Actual On-Bike Fuel Editor (manual Carbs/Protein/Fat/Sodium + barcode scan) */}
                 {isOnBike && editingOnBike && (
                   <form
                     onSubmit={handleSaveOnBikeCustom}
@@ -715,7 +1017,7 @@ export default function TodayView({
                       marginTop: 10,
                       padding: 11,
                       borderRadius: 11,
-                      background: 'var(--bg-canvas)',
+                      background: 'var(--bg-surface)',
                       border: '1px solid var(--border-strong)',
                     }}
                   >
@@ -735,9 +1037,9 @@ export default function TodayView({
 
                     {onBikeScannedItems.length > 0 && (
                       <div className="chip-row" style={{ marginBottom: 8 }}>
-                        {onBikeScannedItems.map((item, idx) => (
+                        {onBikeScannedItems.map((item, sIdx) => (
                           <span
-                            key={`${item}-${idx}`}
+                            key={`${item}-${sIdx}`}
                             className="chip mono"
                             style={{ fontSize: '0.68rem', background: 'var(--code-high-bg)', color: 'var(--code-high)', borderColor: 'transparent' }}
                           >
@@ -866,23 +1168,7 @@ export default function TodayView({
                   </form>
                 )}
 
-                {/* 1-Tap Log Usual Pinned Daily Meal (e.g. everyday breakfast) */}
-                {pinnedStaple && pinnedPreview && slotLogs.length === 0 && (
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-soft btn-block"
-                    style={{ marginTop: 9, justifyContent: 'space-between' }}
-                    onClick={() => onQuickLogStaple(slot, pinnedStaple)}
-                  >
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                      <Sparkles size={14} /> Log Usual {slot.label}: <strong>{pinnedStaple.name}</strong>
-                    </span>
-                    <span className="mono" style={{ fontSize: '0.7rem' }}>
-                      {pinnedPreview.carbs}C · {pinnedPreview.protein}P
-                    </span>
-                  </button>
-                )}
-
+                {/* Card Action Buttons */}
                 <div className="meal-actions">
                   {isOnBike ? (
                     <>
@@ -907,7 +1193,7 @@ export default function TodayView({
                         className="btn btn-sm"
                         onClick={() => onOpenQuickFoodModal(slot)}
                       >
-                        <ScanBarcode size={14} /> Scan Gel / Mix
+                        <ScanBarcode size={14} /> Scan Bar / Gel
                       </button>
                     </>
                   ) : (
@@ -917,7 +1203,7 @@ export default function TodayView({
                         className="btn btn-sm btn-accent"
                         onClick={() => onOpenQuickFoodModal(slot)}
                       >
-                        <ScanBarcode size={14} /> Scan / Add
+                        <ScanBarcode size={14} /> Scan / Type
                       </button>
                       <button
                         type="button"
@@ -925,14 +1211,21 @@ export default function TodayView({
                         onClick={() => onOpenStapleModal(slot, remaining)}
                       >
                         <Scale size={14} />
-                        {slot.slot === 'dinner' ? 'Auto-Scale Dinner' : 'Home Staple'}
+                        {slot.slot === 'dinner' ? 'Saved Dinner' : 'Saved Meal'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-soft"
+                        onClick={() => setOpenSuggestionSlot(suggestionOpen ? null : slot.slot)}
+                      >
+                        <Lightbulb size={13} /> Suggested Meal
                       </button>
                       <button
                         type="button"
                         className="btn btn-sm"
                         onClick={() => onOpenWorkModal(slot)}
                       >
-                        <Camera size={14} /> Work AI
+                        <Camera size={14} /> Work Meal
                       </button>
                     </>
                   )}
@@ -979,7 +1272,7 @@ export default function TodayView({
                     /{m.target}{m.unit}
                   </span>
                 </div>
-                <div className="progress-track light" style={{ height: 4 }}>
+                <div className="progress-track light" style={{ height: 5 }}>
                   <div
                     className="progress-fill"
                     style={{

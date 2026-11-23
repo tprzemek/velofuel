@@ -458,24 +458,5 @@ export function createDefaultBiometrics() {
 }
 
 export function createDefaultLogs() {
-  const today = getIsoDate(0);
-  return {
-    [today]: [
-      {
-        id: 'log-sample-bfast',
-        slot: 'breakfast',
-        type: 'staple',
-        stapleId: 'staple-oats-berries',
-        title: 'Oats & Berries',
-        detail: '95g Rolled Oats · 100g Blueberries · 200g Milk (2%)',
-        carbs: 87,
-        protein: 23,
-        fat: 11,
-        kcal: 539,
-        uncertaintyPct: 0,
-        micros: { fiber: 12.5, iron: 4.8, vitC: 10, calcium: 297, vitD: 2.4, magnesium: 196, sodium: 91 },
-        loggedAt: '07:35',
-      },
-    ],
-  };
+  return {};
 }

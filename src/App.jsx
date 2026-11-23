@@ -198,13 +198,21 @@ export default function App() {
         (syncData.plannedSessions || []).forEach((s) => {
           const existing = sessMap.get(s.date);
           if (!existing || existing.status !== 'completed') {
-            sessMap.set(s.date, { ...s, bottleSizeMl: existing?.bottleSizeMl });
+            sessMap.set(s.date, {
+              ...s,
+              bottleSizeMl: existing?.bottleSizeMl,
+              timelineOrder: existing?.timelineOrder,
+            });
           }
         });
         const nextLogsByDate = { ...prev.logsByDate };
         (syncData.completedSessions || []).forEach((s) => {
           const existing = sessMap.get(s.date);
-          sessMap.set(s.date, { ...s, bottleSizeMl: existing?.bottleSizeMl });
+          sessMap.set(s.date, {
+            ...s,
+            bottleSizeMl: existing?.bottleSizeMl,
+            timelineOrder: existing?.timelineOrder,
+          });
           // If the completed ride from Intervals.icu recorded actual carbs_ingested and user hasn't logged on-bike fuel yet, auto-log it
           if (s.carbsIngested > 0) {
             const dayLogs = nextLogsByDate[s.date] || [];
@@ -499,10 +507,30 @@ export default function App() {
     showToast(`Saved "${mealName}" to your Saved Meals!`);
   };
 
-  const handleSetRideBottleSize = (date, bottleSizeMl) => {
+  const handleSetRideBottleSize = (date, bottleSizeMl, asDefault = true) => {
     setState((prev) => ({
       ...prev,
-      sessions: prev.sessions.map((s) => (s.date === date ? { ...s, bottleSizeMl } : s)),
+      profile: asDefault ? { ...prev.profile, defaultBottleMl: bottleSizeMl } : prev.profile,
+      sessions: prev.sessions.map((s) =>
+        s.date === date ? { ...s, bottleSizeMl: asDefault ? undefined : bottleSizeMl } : s
+      ),
+    }));
+    if (asDefault) {
+      showToast(`Saved ${bottleSizeMl} ml as your default bottle size.`);
+    }
+  };
+
+  const handleReorderTimeline = (date, newOrder) => {
+    const idx = newOrder.indexOf('on_bike');
+    const inferredTiming = idx >= 0 ? (idx <= 1 ? 'morning' : idx === 2 ? 'midday' : 'evening') : undefined;
+    setState((prev) => ({
+      ...prev,
+      profile: { ...prev.profile, defaultTimelineOrder: newOrder },
+      sessions: prev.sessions.map((s) =>
+        s.date === date
+          ? { ...s, timelineOrder: newOrder, ...(inferredTiming ? { timing: inferredTiming } : {}) }
+          : s
+      ),
     }));
   };
 
@@ -775,6 +803,7 @@ export default function App() {
             onSaveSlotAsStaple={handleSaveSlotAsStaple}
             onLogDailyStack={handleLogDailyStack}
             onSetRideBottleSize={handleSetRideBottleSize}
+            onReorderTimeline={handleReorderTimeline}
             onDeleteLog={handleDeleteLog}
             onLogOnBike={handleLogOnBike}
             onSaveOnBikeLog={handleSaveOnBikeLog}

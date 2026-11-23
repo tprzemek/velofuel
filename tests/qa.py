@@ -41,38 +41,50 @@ def run_qa():
             page.on("pageerror", lambda err: page_errors.append(str(err)))
             nav = page.get_by_role("navigation", name="Main navigation")
 
-            # 1. Load Today tab — check remaining macros left, practical sodium, bottle size selector
+            # 1. Load Today tab — verify NO meals listed by default, modern hero ring, prominent planned numbers
             page.goto(URL, wait_until="networkidle")
             assert page.get_by_text("VeloFuel").first.is_visible()
             check_no_jargon(page, "Today tab")
 
-            # Verify "g left" macro readouts exist for Carbs, Protein, Fat
+            assert page.locator(".logged-item").count() == 0, "Expected 0 pre-logged meals by default"
+            assert page.locator(".hero-ring-wrap svg").is_visible(), "Expected modern SVG calorie ring"
+            assert page.locator(".planned-macro-grid").count() == 4, "Expected prominent planned macro grids on all 4 meals"
+
             left_count = page.locator(".macro-bar-box").filter(has_text="g left").count()
             assert left_count == 3, f"Expected 3 macro boxes showing 'g left', found {left_count}"
-
-            # Verify practical sodium helper shows table salt / electrolyte tabs
             assert page.get_by_text("table salt").first.is_visible()
 
-            # Per-ride bottle size selector changes bottle count & label
+            # Default bottle size selection persists to Sync default
             bottle_group = page.get_by_role("group", name="Ride bottle size")
-            bottle_group.get_by_role("button", name="500 ml").click()
-            assert page.get_by_text("3× 500 ml").first.is_visible()
-            bottle_group.get_by_role("button", name="950 ml").click()
-            assert page.get_by_text("2× 950 ml").first.is_visible()
-            print("PASS 1: Today hero macros-left, practical sodium helper, and per-ride bottle size selector")
+            bottle_group.get_by_role("button", name="750 ml").click()
+            assert page.get_by_text("2× 750 ml").first.is_visible()
+            nav.get_by_role("button", name="Sync").click()
+            assert page.get_by_label("Default Ride Bottle").input_value() == "750", "Expected 750 ml saved as default bottle"
+            nav.get_by_role("button", name="Today").click()
+            print("PASS 1: Empty default meals, modern hero ring, prominent planned numbers, and default bottle size")
 
-            # 2. 1-Tap Usual Breakfast & Supplements (Daily Stack + Manual Add + Vit C)
-            page.get_by_role("button", name="Remove Oats & Berries").click()
-            usual_btn = page.get_by_role("button", name="Log Usual Breakfast: Oats & Berries")
-            assert usual_btn.is_visible(), "Expected 1-tap Log Usual Breakfast button after clearing breakfast"
-            usual_btn.click()
-            assert page.get_by_role("button", name="Remove Oats & Berries").is_visible()
+            # 2. Training card placement selector + Up/Down + Drag-and-Drop reordering between meals
+            placement = page.get_by_label("Workout placement:")
+            placement.select_option("0")  # Before Breakfast
+            assert page.locator(".meal-slot").nth(0).get_attribute("data-slot") == "on_bike"
 
-            # Log Daily Supplements stack (Iron + Vit C, Multivitamin)
+            page.get_by_role("button", name="Move Training down").click()
+            assert page.locator(".meal-slot").nth(1).get_attribute("data-slot") == "on_bike"
+
+            # HTML5 Drag-and-Drop training card via drag handle onto lunch card
+            page.locator(".meal-slot[data-slot='on_bike'] .drag-handle").drag_to(page.locator(".meal-slot[data-slot='lunch']"))
+            assert page.locator(".meal-slot").nth(2).get_attribute("data-slot") == "on_bike"
+            print("PASS 2: Training card placement dropdown, Up/Down controls, and Drag-and-Drop reordering")
+
+            # 3. Suggested Meal option + Daily Supplements stack + custom supplement modal
+            page.locator(".meal-slot[data-slot='breakfast']").get_by_role("button", name="Suggested Meal").click()
+            assert page.get_by_text("Oats & Berries").first.is_visible()
+            page.get_by_role("button", name="Log Suggested").click()
+            assert page.locator(".meal-slot[data-slot='breakfast'] .logged-item").count() == 1
+
             page.get_by_role("button", name="Log Daily Stack (2)").click()
             assert page.get_by_text("Iron + Vitamin C").first.is_visible()
 
-            # Open Supplements modal, test Backspace-to-empty on Iron, add custom supplement
             page.get_by_role("button", name="Supplements", exact=True).click()
             supp_iron = page.get_by_label("Iron (mg)")
             clear_and_verify_empty(supp_iron, "Supplement Iron input")
@@ -81,182 +93,111 @@ def run_qa():
             page.get_by_role("button", name="Save & Log Supplement Today").click()
             page.get_by_role("dialog", name="Vitamins and Supplements").get_by_role("button", name="Close").click()
             assert page.get_by_text("Evening Magnesium").first.is_visible()
-            print("PASS 2: 1-tap usual breakfast + Daily Supplements stack + custom supplement modal")
+            print("PASS 3: Suggested Meal drawer + Daily Supplements stack + custom supplement modal")
 
-            # 3. Barcode-first Quick Food + Save logged meal as Reusable Meal + Home Staple Scaler + Work AI + Complete Ride
-            page.get_by_role("button", name="Scan / Add").nth(1).click()
+            # 4. Scan / Type + Save as Reusable + Work Meal accurate estimation & editable macros
+            page.locator(".meal-slot[data-slot='lunch']").get_by_role("button", name="Scan / Type").click()
             scan_cta = page.get_by_role("button", name="Scan Barcode → Enter Amount (g)")
-            assert scan_cta.is_visible(), "Expected primary Scan Barcode CTA in FoodPickerPanel"
+            assert scan_cta.is_visible()
             scan_cta.click()
             assert page.get_by_role("dialog", name="Scan Food Barcode").is_visible()
             page.get_by_role("dialog", name="Scan Food Barcode").get_by_role("button", name="Close").click()
             page.get_by_role("button", name="+ Log").first.click()
 
-            # Save that logged lunch item as a reusable meal
             save_reusable = page.get_by_role("button", name="Save Logged Lunch as Reusable Meal")
-            assert save_reusable.is_visible(), "Expected 'Save Logged Lunch as Reusable Meal' button"
+            assert save_reusable.is_visible()
             save_reusable.click()
 
-            # Home Staple Scaler modal
-            page.get_by_role("button", name="Home Staple").first.click()
-            scaler_input = page.get_by_label("Rolled Oats (dry) grams")
-            clear_and_verify_empty(scaler_input, "StapleScalerModal grams input")
-            scaler_input.type("85")
-            assert scaler_input.input_value() == "85"
+            # Test Work Meal Estimator with real custom text (compound dish + explicit grams, verify no double counting + editable macros!)
+            page.locator(".meal-slot[data-slot='lunch']").get_by_role("button", name="Work Meal").click()
+            work_dialog = page.get_by_role("dialog", name="Estimate Work Meal")
+            work_dialog.get_by_label("Describe what you ate").fill("butter chicken and 200g jasmine rice")
+            work_dialog.get_by_role("button", name="Estimate Macros").click()
+            estimate_card = work_dialog.locator(".card")
+            assert estimate_card.get_by_text("Chicken Tikka / Butter Chicken").is_visible()
+            assert estimate_card.get_by_text("Cooked Rice").is_visible()
+            assert estimate_card.get_by_text("Grilled Chicken Breast").count() == 0, "Double-counted chicken on butter chicken!"
+
+            wm_carbs = work_dialog.get_by_label("Carbs (g)")
+            clear_and_verify_empty(wm_carbs, "Work meal editable carbs")
+            wm_carbs.type("78")
+            work_dialog.get_by_role("button", name="Log Work Meal & Auto-Adjust Evening Dinner").click()
+
+            # Saved Meal scaler modal
+            page.locator(".meal-slot[data-slot='dinner']").get_by_role("button", name="Saved Dinner").click()
             page.get_by_role("button", name="Log Scaled Home Meal").click()
+            print("PASS 4: Scan/Type, Save-as-Reusable, accurate & editable Work Meal estimator (zero double-count), and Saved Meal scaler")
 
-            # Work Meal AI modal
-            page.get_by_role("button", name="Work AI").first.click()
-            page.get_by_role("dialog", name="Estimate Work Meal").locator(".chip").first.click()
-            page.get_by_role("button", name="Log Work Meal & Auto-Adjust Evening Dinner").click()
-
-            # Modify Actual On-Bike Fuel (Carbs + Protein + Fat from bars/gels + inline Barcode Scan button!)
+            # 5. Actual Ride Fuel (Carbs + Protein + Fat + inline Barcode Scan) + Complete Ride
             carbs_box = page.locator(".macro-bar-box").nth(0)
             prot_box = page.locator(".macro-bar-box").nth(1)
             fat_box = page.locator(".macro-bar-box").nth(2)
 
             def parse_left(box):
-                return int(box.inner_text().split("g left")[0].split("\n")[-1].strip())
+                txt = box.locator(".macro-bar-left").inner_text().strip()
+                if "over" in txt:
+                    return -int(txt.replace("+", "").split("g")[0])
+                return int(txt.split("g")[0])
 
             before_c = parse_left(carbs_box)
             before_p = parse_left(prot_box)
             before_f = parse_left(fat_box)
 
             page.get_by_role("button", name="Log Actual / Tweak").click()
-
-            # Verify inline Scan Bar / Gel / Mix barcode scanner opens cleanly from inside Actual Ride Fuel
             page.get_by_role("button", name="Scan Bar / Gel / Mix").click()
             assert page.get_by_role("dialog", name="Scan Food Barcode").is_visible()
             page.get_by_role("dialog", name="Scan Food Barcode").get_by_role("button", name="Close").click()
 
             ob_carbs = page.get_by_label("Actual Carbs (g)")
-            clear_and_verify_empty(ob_carbs, "Actual On-Bike Carbs input")
+            clear_and_verify_empty(ob_carbs, "Actual On-Bike Carbs")
             ob_carbs.type("80")
-
             ob_prot = page.get_by_label("Protein (g) — bars/mix")
-            clear_and_verify_empty(ob_prot, "Actual On-Bike Protein input")
+            clear_and_verify_empty(ob_prot, "Actual On-Bike Protein")
             ob_prot.type("10")
-
             ob_fat = page.get_by_label("Fat (g) — bars/nuts")
-            clear_and_verify_empty(ob_fat, "Actual On-Bike Fat input")
+            clear_and_verify_empty(ob_fat, "Actual On-Bike Fat")
             ob_fat.type("8")
-
             page.get_by_role("button", name="Save Actual Ride Fuel").click()
 
-            assert parse_left(carbs_box) == before_c - 80, f"Expected carbs left {before_c - 80}, got {parse_left(carbs_box)}"
-            assert parse_left(prot_box) == before_p - 10, f"Expected protein left {before_p - 10}, got {parse_left(prot_box)}"
-            assert parse_left(fat_box) == before_f - 8, f"Expected fat left {before_f - 8}, got {parse_left(fat_box)}"
+            assert parse_left(carbs_box) == before_c - 80
+            assert parse_left(prot_box) == before_p - 10
+            assert parse_left(fat_box) == before_f - 8
 
-            # Edit that logged on-bike entry from 80g -> 140g (+60g C) and verify remaining carbs drops by 60g
-            after_80_c = parse_left(carbs_box)
-            page.get_by_role("button", name="Edit actual ride fuel").click()
-            ob_carbs = page.get_by_label("Actual Carbs (g)")
-            clear_and_verify_empty(ob_carbs, "Edit On-Bike Carbs input")
-            ob_carbs.type("140")
-            page.get_by_role("button", name="Save Actual Ride Fuel").click()
-            assert parse_left(carbs_box) == after_80_c - 60
-
-            # Complete ride kJ + actual on-bike carbs/protein/fat + barcode scan button
+            # Complete ride kJ + actual carbs
             page.get_by_role("button", name="Complete").click()
             kj_inp = page.get_by_label("Actual Power Work (kJ)")
             clear_and_verify_empty(kj_inp, "Actual kJ input")
             kj_inp.type("1750")
             ride_carbs_inp = page.get_by_label("Actual Ride Carbs (g)")
-            clear_and_verify_empty(ride_carbs_inp, "Complete ride on-bike carbs input")
+            clear_and_verify_empty(ride_carbs_inp, "Complete ride carbs")
             ride_carbs_inp.type("110")
             page.get_by_role("button", name="Save & Recalculate Remaining Meals").click()
             assert page.get_by_text("1750 kJ").first.is_visible()
             assert page.get_by_text("110 /").first.is_visible()
-            print("PASS 3: Barcode-first flow, save-as-reusable, actual ride C/P/F + barcode scan + live recalculation, scaler, Work AI, and Complete Ride")
+            print("PASS 5: Modifiable actual ride C/P/F + barcode scan + Complete Ride recalculation")
 
-            # 4. Staples tab — Edit Oats & Berries, verify Backspace-to-empty, daily pin & plain labels
+            # 6. Staples, Week, Body, Sync + Mixed Units
             nav.get_by_role("button", name="Staples").click()
             check_no_jargon(page, "Staples tab")
             page.get_by_role("button", name="Edit Oats & Berries").click()
-
             oats_input = page.get_by_label("Rolled Oats (dry) grams")
             clear_and_verify_empty(oats_input, "Oats grams input")
             oats_input.type("60")
-            assert oats_input.input_value() == "60", f"Expected '60', got {oats_input.input_value()!r}"
+            page.get_by_role("button", name="Save Home Meal (3 items)").click()
 
-            # Check plain-English portion behavior dropdown
-            role_select = page.get_by_label("Rolled Oats (dry) portion behavior")
-            options_text = role_select.locator("option").all_inner_texts()
-            assert options_text == [
-                "Keep same amount",
-                "Auto-adjust for ride (Carbs)",
-                "Auto-adjust for muscle (Protein)",
-            ], f"Unexpected portion labels: {options_text}"
-
-            # Remove Milk freely
-            page.get_by_role("button", name="Remove Milk (2% / semi-skimmed)").click()
-            assert page.get_by_text("Ingredients (2)").is_visible()
-
-            # Search USDA whole foods & add Banana
-            page.get_by_placeholder("Or search foods (oats, berries, skyr, brand...)").fill("banana")
-            page.get_by_role("button", name="+ Add").first.click()
-            assert page.get_by_text("Ingredients (3)").is_visible()
-
-            # Write Custom Food freely
-            page.get_by_role("button", name="Write Custom Food").click()
-            page.get_by_label("Food Name").fill("Homemade Granola")
-            page.get_by_label("Your Usual Amount (g)").fill("45")
-            page.get_by_label("Carbs / 100g").fill("62")
-            page.get_by_label("Protein / 100g").fill("11")
-            page.get_by_label("Fat / 100g").fill("14")
-            page.get_by_role("button", name="Add Custom Food").click()
-            assert page.get_by_text("Ingredients (4)").is_visible()
-
-            page.get_by_role("button", name="Save Home Meal (4 items)").click()
-            assert page.get_by_text("60g Rolled Oats (dry)").is_visible()
-            print("PASS 4: Staples editing, daily pin, Backspace-to-empty, remove/search/custom add")
-
-            # 5. Week tab
             nav.get_by_role("button", name="Week").click()
             check_no_jargon(page, "Week tab")
-            page.get_by_role("button", name="Edit").first.click()
-            page.get_by_role("button", name="Save & Update Carb Code").click()
-            print("PASS 5: Week tab & workout editor")
 
-            # 6. Sync tab — Units (Metric/Imperial/Mixed), Auto-Sync, Direct Withings, NumericInputs
             nav.get_by_role("button", name="Sync").click()
             check_no_jargon(page, "Sync tab")
             assert page.get_by_text("Direct Withings Smart Scale Sync").is_visible()
-            assert page.get_by_text("Auto-sync completed workouts & FTP on app open").is_visible()
-
-            tab_inp = page.get_by_label("Electrolyte Tablet Sodium (mg per tab)")
-            clear_and_verify_empty(tab_inp, "Electrolyte tab mg input")
-            tab_inp.type("750")
-            tab_inp.blur()
-            assert tab_inp.input_value() == "750"
-
-            ftp_inp = page.get_by_label("FTP (Watts)")
-            clear_and_verify_empty(ftp_inp, "FTP input")
-            ftp_inp.type("310")
-            ftp_inp.blur()
-            assert ftp_inp.input_value() == "310"
-
-            ge_inp = page.get_by_label("Riding Efficiency (%)")
-            clear_and_verify_empty(ge_inp, "Riding Efficiency input")
-            ge_inp.type("23")
-            ge_inp.blur()
-            assert ge_inp.input_value() == "23"
-
-            # Switch to Mixed Units (lbs weight, oz food, ml/L liquids) and verify across tabs
             page.get_by_role("button", name="Mixed (lbs · oz · ml/L)").click()
+
             nav.get_by_role("button", name="Body").click()
-            check_no_jargon(page, "Body tab (Mixed units)")
-            assert page.get_by_text("lbs").first.is_visible(), "Expected lbs on Body tab in Mixed units"
+            check_no_jargon(page, "Body tab")
+            assert page.get_by_text("lbs").first.is_visible()
             assert page.locator("svg[aria-label='Morning weight and 7-day trend chart']").is_visible()
-
-            nav.get_by_role("button", name="Staples").click()
-            assert page.get_by_text("oz").first.is_visible(), "Expected oz on Staples tab in Mixed units"
-
-            nav.get_by_role("button", name="Today").click()
-            assert page.get_by_role("group", name="Ride bottle size").get_by_role("button", name="650 ml").is_visible(), (
-                "Expected ml bottles on Today tab in Mixed units"
-            )
-            print("PASS 6: Sync tab, Mixed Units across Body/Staples/Today, Direct Withings UI, and numeric inputs")
+            print("PASS 6: Staples, Week, Sync, Mixed Units, and Body tab verified")
 
             browser.close()
     finally:

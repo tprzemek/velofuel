@@ -1,12 +1,13 @@
 import { useState, useRef } from 'react';
 import { Camera, Sparkles, X, Check, AlertCircle, Utensils } from 'lucide-react';
 import { estimateMealLocally } from '../engine/localMealEstimator';
+import NumericInput from './NumericInput';
 
 const QUICK_WORK_PRESETS = [
-  'Cafeteria grilled chicken, 1.5 cups white rice, roasted veggies',
-  'Turkey avocado sourdough sandwich, side salad, apple',
-  'Salmon poke bowl with rice, edamame and spicy mayo',
-  'Large pasta bolognese with parmesan and bread roll',
+  'Grilled chicken breast, 1.5 cups jasmine rice, roasted broccoli',
+  'Turkey avocado sandwich, side salad, apple',
+  'Salmon poke bowl with spicy mayo',
+  'Pasta bolognese with parmesan and bread roll',
 ];
 
 export default function WorkMealModal({
@@ -24,6 +25,7 @@ export default function WorkMealModal({
   const [warning, setWarning] = useState('');
   const [estimate, setEstimate] = useState(null);
   const [portionScale, setPortionScale] = useState(1.0);
+  const [manualOverride, setManualOverride] = useState(null);
   const fileRef = useRef(null);
 
   if (!isOpen || !slotInfo) return null;
@@ -39,9 +41,11 @@ export default function WorkMealModal({
     reader.readAsDataURL(file);
   };
 
+  const buildAiPrompt = (queryText) =>
+    `You are a cycling nutrition coach estimating a meal eaten at work where exact weights are unknown. Return ONLY valid JSON with: title (max 45 chars), items ([{name, estimatedGrams, carbs, protein, fat, kcal}]), carbs, protein, fat, kcal, uncertaintyPct (15-25), micros ({fiber, iron, vitC, calcium, vitD, magnesium, sodium}), notes (1 short plain-English sentence). Account realistically for restaurant/cafeteria cooking oil and sauces. Meal description: "${queryText || 'Analyze the uploaded meal photo.'}"`;
+
   const estimateWithGeminiDirect = async (apiKey, queryText, imgDataUrl, mime) => {
-    const prompt = `You are a cycling nutrition coach estimating a meal eaten at work where exact weights are unknown. Return ONLY valid JSON with: title (max 45 chars), items ([{name, estimatedGrams, carbs, protein, fat, kcal}]), carbs, protein, fat, kcal, uncertaintyPct (15-28), micros ({fiber, iron, calcium, vitD, magnesium, sodium}), notes (1 short plain-English sentence). Account realistically for cafeteria/restaurant cooking oil and sauces. Meal description: "${queryText || 'Analyze the uploaded meal photo.'}"`;
-    const parts = [{ text: prompt }];
+    const parts = [{ text: buildAiPrompt(queryText) }];
     if (imgDataUrl) {
       parts.push({
         inline_data: {
@@ -65,7 +69,32 @@ export default function WorkMealModal({
     const data = await resp.json();
     const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!raw) throw new Error('Empty AI response');
-    return { ...JSON.parse(raw), engine: 'gemini-2.5-flash (direct)' };
+    return { ...JSON.parse(raw), engine: 'Gemini 2.5 Flash AI' };
+  };
+
+  const estimateWithOpenAiDirect = async (apiKey, queryText, imgDataUrl) => {
+    const content = [{ type: 'text', text: buildAiPrompt(queryText) }];
+    if (imgDataUrl) {
+      content.push({ type: 'image_url', image_url: { url: imgDataUrl } });
+    }
+    const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        temperature: 0.2,
+        response_format: { type: 'json_object' },
+        messages: [{ role: 'user', content }],
+      }),
+    });
+    if (!resp.ok) throw new Error(`OpenAI HTTP ${resp.status}`);
+    const data = await resp.json();
+    const raw = data?.choices?.[0]?.message?.content;
+    if (!raw) throw new Error('Empty AI response');
+    return { ...JSON.parse(raw), engine: 'OpenAI GPT-4o-mini AI' };
   };
 
   const handleEstimate = async (overrideText) => {
@@ -77,6 +106,7 @@ export default function WorkMealModal({
     setLoading(true);
     setError('');
     setWarning('');
+    setManualOverride(null);
     try {
       let result = null;
       const hasLocalNodeApi = window.location.port === '3001' || window.location.port === '5173';
@@ -106,11 +136,15 @@ export default function WorkMealModal({
           // fall through to direct browser estimation
         }
       }
-      if (!result && aiConfig?.apiKey?.trim() && (aiConfig.provider === 'gemini' || aiConfig.provider === 'auto')) {
+      if (!result && aiConfig?.apiKey?.trim()) {
         try {
-          result = await estimateWithGeminiDirect(aiConfig.apiKey.trim(), queryText, photoDataUrl, photoMime);
+          if (aiConfig.provider === 'openai') {
+            result = await estimateWithOpenAiDirect(aiConfig.apiKey.trim(), queryText, photoDataUrl);
+          } else {
+            result = await estimateWithGeminiDirect(aiConfig.apiKey.trim(), queryText, photoDataUrl, photoMime);
+          }
         } catch (aiErr) {
-          setWarning(`Vision AI error (${aiErr.message}) — used built-in food estimator instead.`);
+          setWarning(`AI API error (${aiErr.message}) — fell back to built-in USDA food matcher.`);
         }
       }
       if (!result) {
@@ -123,18 +157,32 @@ export default function WorkMealModal({
     }
   };
 
-  const scaled = estimate
+  const baseScaled = estimate
     ? {
         carbs: Math.round((estimate.carbs || 0) * portionScale),
         protein: Math.round((estimate.protein || 0) * portionScale),
         fat: Math.round((estimate.fat || 0) * portionScale),
-        kcal: Math.round((estimate.kcal || 0) * portionScale),
         uncertaintyPct: estimate.uncertaintyPct || 20,
       }
     : null;
 
+  const finalMacros = baseScaled
+    ? (() => {
+        const carbs = manualOverride?.carbs ?? baseScaled.carbs;
+        const protein = manualOverride?.protein ?? baseScaled.protein;
+        const fat = manualOverride?.fat ?? baseScaled.fat;
+        return {
+          carbs,
+          protein,
+          fat,
+          kcal: Math.round(carbs * 4 + protein * 4 + fat * 9),
+          uncertaintyPct: baseScaled.uncertaintyPct,
+        };
+      })()
+    : null;
+
   const handleConfirm = () => {
-    if (!estimate || !scaled) return;
+    if (!estimate || !finalMacros) return;
     const itemSummary = (estimate.items || [])
       .map((i) => `${i.name} (~${Math.round((i.estimatedGrams || 0) * portionScale)}g)`)
       .join(' · ');
@@ -146,14 +194,15 @@ export default function WorkMealModal({
       type: 'work_estimate',
       title: estimate.title || 'Work Meal (Estimated)',
       detail: itemSummary || description || 'Estimated work meal',
-      carbs: scaled.carbs,
-      protein: scaled.protein,
-      fat: scaled.fat,
-      kcal: scaled.kcal,
-      uncertaintyPct: scaled.uncertaintyPct,
+      carbs: finalMacros.carbs,
+      protein: finalMacros.protein,
+      fat: finalMacros.fat,
+      kcal: finalMacros.kcal,
+      uncertaintyPct: finalMacros.uncertaintyPct,
       micros: {
         fiber: Number(((micros.fiber || 0) * portionScale).toFixed(1)),
         iron: Number(((micros.iron || 0) * portionScale).toFixed(1)),
+        vitC: Math.round((micros.vitC || 0) * portionScale),
         calcium: Math.round((micros.calcium || 0) * portionScale),
         vitD: Number(((micros.vitD || 0) * portionScale).toFixed(1)),
         magnesium: Math.round((micros.magnesium || 0) * portionScale),
@@ -165,6 +214,7 @@ export default function WorkMealModal({
     setDescription('');
     setPhotoDataUrl('');
     setEstimate(null);
+    setManualOverride(null);
     onClose();
   };
 
@@ -176,20 +226,20 @@ export default function WorkMealModal({
           <div>
             <h2 className="modal-title">Work Meal Estimator · {slotInfo.label}</h2>
             <div className="muted-text" style={{ marginTop: 2 }}>
-              No scale needed — logs with a ±% confidence band so Home Dinner compensates.
+              Describe your meal or upload a plate photo — edit any macro directly if needed.
             </div>
           </div>
-          <button className="icon-btn" onClick={onClose} aria-label="Close">
+          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
             <X size={18} />
           </button>
         </div>
 
         <div className="field" style={{ marginBottom: 10 }}>
-          <label htmlFor="work-meal-text">Describe your plate (text or voice dictate on phone)</label>
+          <label htmlFor="work-meal-text">Describe what you ate (include rough amounts like 200g, 2 slices, 1.5 cups)</label>
           <textarea
             id="work-meal-text"
             className="textarea"
-            placeholder="e.g., Cafeteria grilled chicken breast, ~1.5 cups jasmine rice, roasted broccoli with olive oil, small sourdough roll..."
+            placeholder="e.g., Chicken burrito bowl, OR 200g grilled chicken, 1.5 cups rice, broccoli..."
             value={description}
             onChange={(e) => setDescription(e.target.value)}
           />
@@ -226,7 +276,7 @@ export default function WorkMealModal({
             style={{ flex: 1 }}
             onClick={() => fileRef.current?.click()}
           >
-            <Camera size={16} /> {photoDataUrl ? 'Replace Plate Photo' : 'Snap / Upload Photo'}
+            <Camera size={16} /> {photoDataUrl ? 'Replace Photo' : 'Plate Photo'}
           </button>
           <button
             type="button"
@@ -267,38 +317,69 @@ export default function WorkMealModal({
           </div>
         )}
 
-        {estimate && scaled && (
+        {estimate && finalMacros && (
           <div className="card" style={{ background: 'var(--bg-canvas)', boxShadow: 'none', marginTop: 4 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 8 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 800, fontSize: '0.88rem' }}>
                 <Utensils size={15} color="var(--code-med)" />
                 <span>{estimate.title}</span>
               </div>
-              <span className="est-tag mono">±{scaled.uncertaintyPct}% est</span>
+              <span className="est-tag mono">±{finalMacros.uncertaintyPct}% est</span>
             </div>
 
-            <div className="stat-pair-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', marginBottom: 10 }}>
-              <div className="mini-stat" style={{ background: 'var(--bg-surface)' }}>
+            {estimate.unrecognizedFallback && (
+              <div className="notice-strip" style={{ marginBottom: 10, fontSize: '0.74rem' }}>
+                <AlertCircle size={14} style={{ flexShrink: 0, marginTop: 2 }} />
+                <span>
+                  Offline matcher didn&apos;t recognize that dish name — adjust the Carbs, Protein, and Fat boxes below (or add a free Gemini key on Sync for real AI).
+                </span>
+              </div>
+            )}
+
+            {/* Directly editable Carbs / Protein / Fat + live Kcal */}
+            <div className="field-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', gap: 6, marginBottom: 10 }}>
+              <div className="mini-stat" style={{ background: 'var(--bg-surface)', padding: '6px 8px' }}>
                 <div className="mini-stat-label">Kcal</div>
-                <div className="mini-stat-val mono">{scaled.kcal}</div>
+                <div className="mini-stat-val mono" style={{ fontSize: '0.95rem', marginTop: 4 }}>{finalMacros.kcal}</div>
               </div>
-              <div className="mini-stat" style={{ background: 'var(--bg-surface)' }}>
-                <div className="mini-stat-label">Carbs</div>
-                <div className="mini-stat-val mono" style={{ color: 'var(--macro-carb)' }}>
-                  {scaled.carbs}g
-                </div>
+              <div className="field">
+                <label htmlFor="wm-carbs" style={{ fontSize: '0.66rem', color: 'var(--macro-carb)' }}>Carbs (g)</label>
+                <NumericInput
+                  id="wm-carbs"
+                  min={0}
+                  max={600}
+                  fallback={0}
+                  className="input mono"
+                  style={{ padding: '5px 6px', fontSize: '0.86rem', fontWeight: 700 }}
+                  value={finalMacros.carbs}
+                  onChange={(val) => setManualOverride((prev) => ({ ...(prev || {}), carbs: val }))}
+                />
               </div>
-              <div className="mini-stat" style={{ background: 'var(--bg-surface)' }}>
-                <div className="mini-stat-label">Protein</div>
-                <div className="mini-stat-val mono" style={{ color: 'var(--macro-protein)' }}>
-                  {scaled.protein}g
-                </div>
+              <div className="field">
+                <label htmlFor="wm-prot" style={{ fontSize: '0.66rem', color: 'var(--macro-protein)' }}>Prot (g)</label>
+                <NumericInput
+                  id="wm-prot"
+                  min={0}
+                  max={300}
+                  fallback={0}
+                  className="input mono"
+                  style={{ padding: '5px 6px', fontSize: '0.86rem', fontWeight: 700 }}
+                  value={finalMacros.protein}
+                  onChange={(val) => setManualOverride((prev) => ({ ...(prev || {}), protein: val }))}
+                />
               </div>
-              <div className="mini-stat" style={{ background: 'var(--bg-surface)' }}>
-                <div className="mini-stat-label">Fat</div>
-                <div className="mini-stat-val mono" style={{ color: 'var(--macro-fat)' }}>
-                  {scaled.fat}g
-                </div>
+              <div className="field">
+                <label htmlFor="wm-fat" style={{ fontSize: '0.66rem', color: 'var(--macro-fat)' }}>Fat (g)</label>
+                <NumericInput
+                  id="wm-fat"
+                  min={0}
+                  max={250}
+                  fallback={0}
+                  className="input mono"
+                  style={{ padding: '5px 6px', fontSize: '0.86rem', fontWeight: 700 }}
+                  value={finalMacros.fat}
+                  onChange={(val) => setManualOverride((prev) => ({ ...(prev || {}), fat: val }))}
+                />
               </div>
             </div>
 
@@ -328,9 +409,9 @@ export default function WorkMealModal({
 
             <div className="range-row" style={{ marginBottom: 10 }}>
               <div className="range-head">
-                <span style={{ fontWeight: 700, fontSize: '0.76rem' }}>Portion Reality Check</span>
+                <span style={{ fontWeight: 700, fontSize: '0.76rem' }}>Portion Size Slider</span>
                 <span className="mono" style={{ fontWeight: 700 }}>
-                  {Math.round(portionScale * 100)}% {portionScale < 0.9 ? '(Smaller)' : portionScale > 1.1 ? '(Heaping)' : '(Standard)'}
+                  {Math.round(portionScale * 100)}% {portionScale < 0.9 ? '(Smaller)' : portionScale > 1.1 ? '(Larger)' : '(Standard)'}
                 </span>
               </div>
               <input
@@ -339,22 +420,25 @@ export default function WorkMealModal({
                 max={1.5}
                 step={0.05}
                 value={portionScale}
-                onChange={(e) => setPortionScale(Number(e.target.value))}
+                onChange={(e) => {
+                  setPortionScale(Number(e.target.value));
+                  setManualOverride(null);
+                }}
               />
             </div>
 
             {estimate.notes && (
-              <p className="muted-text" style={{ fontSize: '0.73rem', marginBottom: 10 }}>
+              <p className="muted-text" style={{ fontSize: '0.73rem', marginBottom: 8 }}>
                 {estimate.notes}
               </p>
             )}
 
             <div style={{ fontSize: '0.68rem', color: 'var(--ink-muted)', marginBottom: 10 }}>
-              Engine: <span className="mono">{estimate.engine}</span>
+              Based on: <span className="mono">{estimate.engine}</span>
             </div>
 
             <button type="button" className="btn btn-primary btn-block" onClick={handleConfirm}>
-              <Check size={16} /> Log Work Meal & Auto-Adjust Evening Dinner
+              <Check size={16} /> Log Work Meal &amp; Auto-Adjust Evening Dinner
             </button>
           </div>
         )}

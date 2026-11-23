@@ -314,6 +314,7 @@ export function computeDailyPlan({
     proteinG,
     fatG,
     onBikePlan,
+    timelineOrder: todaySession?.timelineOrder || profile.defaultTimelineOrder,
   });
 
   const microTargets = {
@@ -367,9 +368,29 @@ export function computeDailyPlan({
   };
 }
 
-function buildMealTimeline({ category, todaySession, needsTomorrowPreload, carbsG, proteinG, fatG, onBikePlan }) {
+export const DEFAULT_TIMELINE_ORDER = ['breakfast', 'lunch', 'snack', 'on_bike', 'dinner'];
+
+function inferTimingFromOrder(order, fallbackTiming = 'evening') {
+  if (!Array.isArray(order)) return fallbackTiming;
+  const idx = order.indexOf('on_bike');
+  if (idx < 0) return fallbackTiming;
+  if (idx <= 1) return 'morning';
+  if (idx === 2) return 'midday';
+  return 'evening';
+}
+
+function buildMealTimeline({
+  category,
+  todaySession,
+  needsTomorrowPreload,
+  carbsG,
+  proteinG,
+  fatG,
+  onBikePlan,
+  timelineOrder,
+}) {
   const hasRide = Boolean(todaySession && todaySession.durationMin > 0 && todaySession.intensity !== 'rest');
-  const timing = todaySession?.timing || 'evening';
+  const timing = inferTimingFromOrder(timelineOrder, todaySession?.timing || 'evening');
   const onBikeCarbs = onBikePlan?.totalCarbs || 0;
   const offBikeCarbs = Math.max(80, carbsG - onBikeCarbs);
 
@@ -394,49 +415,49 @@ function buildMealTimeline({ category, todaySession, needsTomorrowPreload, carbs
     return 'LOW';
   };
 
-  const slots = [
-    {
+  const slotsById = {
+    breakfast: {
       slot: 'breakfast',
       label: hasRide && timing === 'morning' ? 'Pre-Ride Breakfast' : 'Breakfast',
       location: 'Home',
-      timeHint: hasRide && timing === 'morning' ? 'Light & quick energy · Low fiber' : '07:30',
+      timeHint: hasRide && timing === 'morning' ? 'Light & quick energy · Low fiber' : 'Morning',
       targetCarbs: Math.round(offBikeCarbs * cWeights.breakfast),
       targetProtein: Math.round(proteinG * pWeights.breakfast),
       targetFat: Math.round(fatG * fWeights.breakfast),
     },
-    {
+    lunch: {
       slot: 'lunch',
       label: 'Lunch',
       location: 'Work / Home',
-      timeHint: '12:30',
+      timeHint: 'Midday',
       targetCarbs: Math.round(offBikeCarbs * cWeights.lunch),
       targetProtein: Math.round(proteinG * pWeights.lunch),
       targetFat: Math.round(fatG * fWeights.lunch),
     },
-    {
+    snack: {
       slot: 'snack',
-      label: hasRide ? (timing === 'evening' ? 'Pre-Ride Fuel' : 'Post-Ride Recovery') : 'Afternoon Snack',
+      label: hasRide ? (timing === 'evening' ? 'Pre-Ride Snack' : 'Post-Ride Recovery') : 'Afternoon Snack',
       location: 'Home / Work',
-      timeHint: hasRide && timing === 'evening' ? '90m before · Low fat' : hasRide ? 'Within 45m · Low fat' : '15:30',
+      timeHint: hasRide && timing === 'evening' ? '90m before · Low fat' : hasRide ? 'Within 45m · Low fat' : 'Afternoon',
       targetCarbs: Math.round(offBikeCarbs * cWeights.snack),
       targetProtein: Math.round(proteinG * pWeights.snack),
       targetFat: Math.round(fatG * fWeights.snack),
     },
-    {
+    dinner: {
       slot: 'dinner',
       label: needsTomorrowPreload ? 'Dinner (Pre-Load)' : 'Dinner',
       location: 'Home (Auto-Balances Day)',
-      timeHint: '19:30',
+      timeHint: 'Evening',
       targetCarbs: Math.round(offBikeCarbs * cWeights.dinner),
       targetProtein: Math.round(proteinG * pWeights.dinner),
       targetFat: Math.round(fatG * fWeights.dinner),
     },
-  ];
+  };
 
   if (hasRide && onBikePlan) {
-    const rideSlot = {
+    slotsById.on_bike = {
       slot: 'on_bike',
-      label: 'On-Bike Fuel',
+      label: 'Training · On-Bike Fuel',
       location: 'During Ride',
       timeHint:
         onBikeCarbs > 0
@@ -448,11 +469,26 @@ function buildMealTimeline({ category, todaySession, needsTomorrowPreload, carbs
       carbCode: onBikePlan.carbsPerHour >= 70 ? 'HIGH' : onBikeCarbs > 0 ? 'MED' : 'LOW',
       targetKcal: onBikeCarbs * 4,
     };
-    const insertIdx = timing === 'morning' ? 1 : timing === 'midday' ? 2 : 3;
-    slots.splice(insertIdx, 0, rideSlot);
   }
 
-  return slots.map((s) => ({
+  // Respect user's custom card placement order (or sensible default based on ride timing)
+  let effectiveOrder;
+  if (Array.isArray(timelineOrder) && timelineOrder.length > 0) {
+    effectiveOrder = [...timelineOrder];
+    for (const id of Object.keys(slotsById)) {
+      if (!effectiveOrder.includes(id)) effectiveOrder.push(id);
+    }
+  } else {
+    effectiveOrder = ['breakfast', 'lunch', 'snack', 'dinner'];
+    if (slotsById.on_bike) {
+      const insertIdx = timing === 'morning' ? 1 : timing === 'midday' ? 2 : 3;
+      effectiveOrder.splice(insertIdx, 0, 'on_bike');
+    }
+  }
+
+  const orderedSlots = effectiveOrder.map((id) => slotsById[id]).filter(Boolean);
+
+  return orderedSlots.map((s) => ({
     ...s,
     carbCode:
       s.carbCode ||
@@ -463,6 +499,52 @@ function buildMealTimeline({ category, todaySession, needsTomorrowPreload, carbs
         : codeForCarbs(s.targetCarbs)),
     targetKcal: s.targetKcal ?? s.targetCarbs * 4 + s.targetProtein * 4 + s.targetFat * 9,
   }));
+}
+
+// Suggest a smart meal for any meal slot tailored to today's carb demand
+export function suggestMealForSlot(slot, staples = [], category = 'MODERATE', remainingMacros = null) {
+  if (!slot || !Array.isArray(staples) || staples.length === 0) return null;
+  const pinned = staples.find((s) => s.dailySlot === slot.slot);
+  const slotMatches = staples.filter((s) => s.mealTypes?.includes(slot.slot));
+  const candidates = slotMatches.length > 0 ? slotMatches : staples;
+
+  let chosen = pinned;
+  if (!chosen) {
+    const isLowCarbDay = category === 'REST' || category === 'LOW';
+    if (slot.slot === 'breakfast' && isLowCarbDay) {
+      chosen = candidates.find((s) => /egg|avocado|yogurt/i.test(s.name)) || candidates[0];
+    } else if (slot.slot === 'breakfast') {
+      chosen = candidates.find((s) => /oat|banana|honey/i.test(s.name)) || candidates[0];
+    } else if (slot.slot === 'dinner' && !isLowCarbDay) {
+      chosen = candidates.find((s) => /rice|pasta/i.test(s.name)) || candidates[0];
+    } else if (slot.slot === 'dinner' && isLowCarbDay) {
+      chosen = candidates.find((s) => /salmon|chicken/i.test(s.name)) || candidates[0];
+    } else {
+      chosen = candidates[0];
+    }
+  }
+
+  const targetC =
+    slot.slot === 'dinner' && remainingMacros
+      ? Math.max(25, Math.round(remainingMacros.carbs))
+      : slot.targetCarbs;
+  const targetP =
+    slot.slot === 'dinner' && remainingMacros
+      ? Math.max(25, Math.round(remainingMacros.protein))
+      : slot.targetProtein;
+
+  const scaled = scaleStapleToTargets(chosen, targetC, targetP);
+  return {
+    staple: chosen,
+    scaled,
+    reason: pinned
+      ? 'Your pinned favorite, portioned for today'
+      : slot.slot === 'dinner' && remainingMacros
+      ? 'Auto-balanced to close out today’s remaining macros'
+      : category === 'HIGH' || category === 'VERY_HIGH'
+      ? 'High-carb match for today’s hard session'
+      : 'Balanced match for today’s targets',
+  };
 }
 
 // Flexible Ingredient-List Staple Auto-Scaling

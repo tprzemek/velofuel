@@ -1,4 +1,4 @@
-const CACHE_NAME = 'velofuel-v7';
+const CACHE_NAME = 'velofuel-v8';
 const APP_SHELL = ['./', './index.html', './manifest.webmanifest', './icon-512.jpg'];
 
 self.addEventListener('install', (event) => {
