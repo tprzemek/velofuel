@@ -2,7 +2,7 @@ import { X } from 'lucide-react';
 import { formatFoodAmount } from '../engine/units';
 import FoodPickerPanel from './FoodPickerPanel';
 
-export default function QuickFoodModal({ isOpen, onClose, slotInfo, units, onLogEntry }) {
+export default function QuickFoodModal({ isOpen, onClose, slotInfo, units, usdaApiKey = '', onLogEntry }) {
   if (!isOpen || !slotInfo) return null;
 
   const handleAddSingleFood = (ing) => {
@@ -47,7 +47,7 @@ export default function QuickFoodModal({ isOpen, onClose, slotInfo, units, onLog
           <div>
             <h2 className="modal-title">Scan / Add Food · {slotInfo.label}</h2>
             <div className="muted-text" style={{ marginTop: 2 }}>
-              Scan a barcode, search foods, or type a custom item. You can save logged foods as a reusable meal anytime.
+              Scan a barcode, search USDA &amp; branded foods, or type a custom item. Save logged foods as a reusable meal anytime.
             </div>
           </div>
           <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
@@ -55,7 +55,7 @@ export default function QuickFoodModal({ isOpen, onClose, slotInfo, units, onLog
           </button>
         </div>
 
-        <FoodPickerPanel onAddIngredient={handleAddSingleFood} buttonLabel="Log" units={units} />
+        <FoodPickerPanel onAddIngredient={handleAddSingleFood} buttonLabel="Log" units={units} usdaApiKey={usdaApiKey} />
       </div>
     </div>
   );

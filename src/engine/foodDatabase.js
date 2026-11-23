@@ -1,4 +1,6 @@
-// Verified USDA Whole-Foods Database (offline, instant) + Open Food Facts (3M+ packaged foods & barcode lookup) + optional USDA FDC API
+// Verified USDA Whole-Foods & Popular Cyclist/Grocery Database (offline, instant)
+// + Live USDA FoodData Central API (400,000+ Foundation, SR Legacy & Branded foods — same USDA backbone Cronometer uses)
+// + Live Open Food Facts v2 API (international packaged brands & barcode lookup)
 
 export const USDA_WHOLE_FOODS = [
   // Breakfast & Grains
@@ -79,7 +81,29 @@ export const USDA_WHOLE_FOODS = [
   { id: 'usda-mixed-veg', name: 'Mixed Roasted / Steamed Vegetables', category: 'Vegetables', defaultGrams: 150, defaultRole: 'fixed', per100g: { carbs: 7.5, protein: 2.2, fat: 0.4, fiber: 3.0, iron: 0.9, calcium: 38, vitD: 0, vitC: 25.0, magnesium: 22, sodium: 30 } },
   { id: 'usda-tomato-sauce', name: 'Tomato Pasta Sauce', category: 'Sauces', defaultGrams: 140, defaultRole: 'fixed', per100g: { carbs: 7.2, protein: 1.6, fat: 1.5, fiber: 1.8, iron: 0.8, calcium: 18, vitD: 0, vitC: 7.0, magnesium: 16, sodium: 320 } },
 
-  // Cycling Fuel
+  // Popular Everyday Grocery & Cycling Brands (instant offline match)
+  { id: 'brand-chobani-0', name: 'Chobani Nonfat Plain Greek Yogurt', category: 'Branded Dairy', defaultGrams: 170, defaultRole: 'protein', per100g: { carbs: 3.5, protein: 9.4, fat: 0, fiber: 0, iron: 0, calcium: 112, vitD: 0, magnesium: 11, sodium: 35 } },
+  { id: 'brand-fage-0', name: 'Fage Total 0% Greek Yogurt', category: 'Branded Dairy', defaultGrams: 170, defaultRole: 'protein', per100g: { carbs: 3.0, protein: 10.6, fat: 0, fiber: 0, iron: 0, calcium: 118, vitD: 0, magnesium: 11, sodium: 38 } },
+  { id: 'brand-fage-2', name: 'Fage Total 2% Greek Yogurt', category: 'Branded Dairy', defaultGrams: 170, defaultRole: 'protein', per100g: { carbs: 3.0, protein: 10.0, fat: 2.0, fiber: 0, iron: 0, calcium: 118, vitD: 0, magnesium: 11, sodium: 38 } },
+  { id: 'brand-siggis', name: "Siggi's Plain 0% Skyr", category: 'Branded Dairy', defaultGrams: 150, defaultRole: 'protein', per100g: { carbs: 4.0, protein: 10.7, fat: 0, fiber: 0, iron: 0, calcium: 133, vitD: 0, magnesium: 12, sodium: 43 } },
+  { id: 'brand-fairlife-2', name: 'Fairlife 2% Ultra-Filtered Milk', category: 'Branded Dairy', defaultGrams: 240, defaultRole: 'protein', per100g: { carbs: 2.5, protein: 5.4, fat: 1.9, fiber: 0, iron: 0, calcium: 158, vitD: 1.2, magnesium: 12, sodium: 50 } },
+  { id: 'brand-fairlife-core', name: 'Fairlife Core Power Protein Shake (26g)', category: 'Branded Dairy', defaultGrams: 414, defaultRole: 'protein', per100g: { carbs: 1.7, protein: 6.3, fat: 1.1, fiber: 0, iron: 0, calcium: 157, vitD: 1.0, magnesium: 12, sodium: 58 } },
+  { id: 'brand-quaker-oats', name: 'Quaker Old Fashioned Rolled Oats', category: 'Branded Grains', defaultGrams: 80, defaultRole: 'carb', per100g: { carbs: 67.5, protein: 12.5, fat: 7.5, fiber: 10.0, iron: 3.8, calcium: 50, vitD: 0, magnesium: 138, sodium: 0 } },
+  { id: 'brand-daves-bread', name: "Dave's Killer Bread 21 Whole Grains", category: 'Branded Grains', defaultGrams: 90, defaultRole: 'carb', per100g: { carbs: 48.9, protein: 11.1, fat: 3.3, fiber: 11.1, iron: 2.7, calcium: 44, vitD: 0, magnesium: 65, sodium: 378 } },
+  { id: 'brand-kodiak', name: 'Kodiak Cakes Power Cakes Mix (dry)', category: 'Branded Grains', defaultGrams: 63, defaultRole: 'carb', per100g: { carbs: 58.7, protein: 22.2, fat: 3.2, fiber: 7.9, iron: 3.2, calcium: 111, vitD: 0, magnesium: 60, sodium: 603 } },
+  { id: 'brand-clif-bar', name: 'Clif Bar Energy Bar (1 bar = 68g)', category: 'Bike Fuel', defaultGrams: 68, defaultRole: 'carb', per100g: { carbs: 64.7, protein: 14.7, fat: 7.4, fiber: 7.4, iron: 5.3, calcium: 294, vitD: 0, magnesium: 132, sodium: 220 } },
+  { id: 'brand-clif-bloks', name: 'Clif Bloks Energy Chews (1 pack = 60g)', category: 'Bike Fuel', defaultGrams: 60, defaultRole: 'carb', per100g: { carbs: 80.0, protein: 0, fat: 0, fiber: 0, iron: 0, calcium: 0, vitD: 0, magnesium: 0, sodium: 167 } },
+  { id: 'brand-maurten-gel100', name: 'Maurten Gel 100 (1 packet = 40g)', category: 'Bike Fuel', defaultGrams: 40, defaultRole: 'carb', per100g: { carbs: 62.5, protein: 0, fat: 0, fiber: 0, iron: 0, calcium: 0, vitD: 0, magnesium: 0, sodium: 50 } },
+  { id: 'brand-maurten-mix320', name: 'Maurten Drink Mix 320 (1 sachet = 80g)', category: 'Bike Fuel', defaultGrams: 80, defaultRole: 'carb', per100g: { carbs: 98.8, protein: 0, fat: 0, fiber: 0, iron: 0, calcium: 0, vitD: 0, magnesium: 0, sodium: 250 } },
+  { id: 'brand-sis-gel', name: 'SiS GO Isotonic Energy Gel (60ml)', category: 'Bike Fuel', defaultGrams: 60, defaultRole: 'carb', per100g: { carbs: 36.7, protein: 0, fat: 0, fiber: 0, iron: 0, calcium: 0, vitD: 0, magnesium: 0, sodium: 17 } },
+  { id: 'brand-gu-gel', name: 'GU Energy Gel (1 packet = 32g)', category: 'Bike Fuel', defaultGrams: 32, defaultRole: 'carb', per100g: { carbs: 68.8, protein: 0, fat: 0, fiber: 0, iron: 0, calcium: 63, vitD: 0, magnesium: 0, sodium: 188 } },
+  { id: 'brand-skratch', name: 'Skratch Labs Sport Hydration Mix (1 scoop = 22g)', category: 'Bike Fuel', defaultGrams: 22, defaultRole: 'carb', per100g: { carbs: 90.9, protein: 0, fat: 0, fiber: 0, iron: 0, calcium: 182, vitD: 0, vitC: 164, magnesium: 182, sodium: 1727 } },
+  { id: 'brand-kind-bar', name: 'KIND Dark Chocolate Nuts & Sea Salt Bar (40g)', category: 'Branded Snacks', defaultGrams: 40, defaultRole: 'fixed', per100g: { carbs: 40.0, protein: 15.0, fat: 37.5, fiber: 17.5, iron: 3.0, calcium: 125, vitD: 0, magnesium: 160, sodium: 313 } },
+  { id: 'brand-rxbar', name: 'RXBAR Protein Bar (1 bar = 52g)', category: 'Branded Snacks', defaultGrams: 52, defaultRole: 'protein', per100g: { carbs: 44.2, protein: 23.1, fat: 17.3, fiber: 9.6, iron: 2.1, calcium: 58, vitD: 0, magnesium: 70, sodium: 500 } },
+  { id: 'brand-quest-bar', name: 'Quest Protein Bar (1 bar = 60g)', category: 'Branded Snacks', defaultGrams: 60, defaultRole: 'protein', per100g: { carbs: 36.7, protein: 35.0, fat: 13.3, fiber: 23.3, iron: 1.5, calcium: 167, vitD: 0, magnesium: 40, sodium: 367 } },
+  { id: 'brand-on-whey', name: 'Optimum Nutrition Gold Standard Whey (1 scoop = 31g)', category: 'Branded Dairy', defaultGrams: 31, defaultRole: 'protein', per100g: { carbs: 9.7, protein: 77.4, fat: 4.8, fiber: 0, iron: 0, calcium: 419, vitD: 0, magnesium: 65, sodium: 419 } },
+
+  // Generic Cycling Fuel
   { id: 'usda-carb-mix', name: 'Carb Drink Mix (powder)', category: 'Bike Fuel', defaultGrams: 60, defaultRole: 'carb', per100g: { carbs: 95.0, protein: 0, fat: 0, fiber: 0, iron: 0, calcium: 0, vitD: 0, vitC: 0, magnesium: 40, sodium: 800 } },
   { id: 'usda-gel', name: 'Energy Gel (1 packet ≈ 40g)', category: 'Bike Fuel', defaultGrams: 40, defaultRole: 'carb', per100g: { carbs: 65.0, protein: 0, fat: 0, fiber: 0, iron: 0, calcium: 0, vitD: 0, vitC: 0, magnesium: 20, sodium: 150 } },
 ];
@@ -91,7 +115,95 @@ export function searchLocalWholeFoods(query) {
   return USDA_WHOLE_FOODS.filter((item) => {
     const hay = `${item.name} ${item.category}`.toLowerCase();
     return terms.every((t) => hay.includes(t));
-  }).slice(0, 12);
+  }).slice(0, 14);
+}
+
+function smartTitleCase(str) {
+  const s = String(str || '').trim();
+  if (!s) return '';
+  // Only normalize shouting ALL-CAPS descriptions from USDA Branded labels
+  if (s === s.toUpperCase() && s.length > 4) {
+    return s
+      .toLowerCase()
+      .replace(/(^|[\s,/-])([a-z])/g, (_, sep, ch) => `${sep}${ch.toUpperCase()}`);
+  }
+  return s;
+}
+
+function pickDefaultRole(carbs, protein) {
+  if (carbs >= 40 && carbs > protein * 2) return 'carb';
+  if (protein >= 18 && protein > carbs) return 'protein';
+  return 'fixed';
+}
+
+function normalizeUsdaFood(f, allowZeroMacro = false) {
+  if (!f || !Array.isArray(f.foodNutrients)) return null;
+  const byId = {};
+  for (const n of f.foodNutrients) {
+    const id = Number(n.nutrientId ?? n.nutrient?.id);
+    const val = Number(n.value ?? n.amount);
+    if (id && Number.isFinite(val)) {
+      byId[id] = val;
+    }
+  }
+  const carbs = Number(byId[1005] ?? 0);
+  const protein = Number(byId[1003] ?? 0);
+  const fat = Number(byId[1004] ?? 0);
+  if (!allowZeroMacro && carbs === 0 && protein === 0 && fat === 0) return null;
+
+  const rawDesc = smartTitleCase(f.description || '');
+  if (!rawDesc) return null;
+
+  const rawBrand = smartTitleCase(f.brandName || f.brandOwner || '');
+  const brand = rawBrand && !/^none$/i.test(rawBrand) ? rawBrand : '';
+  const displayName =
+    brand && !rawDesc.toLowerCase().includes(brand.toLowerCase())
+      ? `${rawDesc} (${brand})`
+      : rawDesc;
+
+  const servingUnit = String(f.servingSizeUnit || '').toLowerCase();
+  const rawServing = Number(f.servingSize);
+  const servingGrams =
+    Number.isFinite(rawServing) && rawServing > 0 && (servingUnit === 'g' || servingUnit === 'ml' || servingUnit === 'grm')
+      ? rawServing
+      : 100;
+
+  const sourceTag =
+    f.dataType === 'Branded'
+      ? 'USDA Branded'
+      : f.dataType === 'Foundation' || f.dataType === 'SR Legacy'
+      ? 'USDA Verified'
+      : 'USDA FNDDS';
+
+  return {
+    id: `usda-fdc-${f.fdcId}`,
+    barcode: f.gtinUpc || '',
+    name: displayName,
+    brand,
+    source: sourceTag,
+    defaultGrams: Math.min(350, Math.max(15, Math.round(servingGrams))),
+    defaultRole: pickDefaultRole(carbs, protein),
+    per100g: {
+      carbs: Number(carbs.toFixed(1)),
+      protein: Number(protein.toFixed(1)),
+      fat: Number(fat.toFixed(1)),
+      fiber: Number((byId[1079] || 0).toFixed(1)),
+      iron: Number((byId[1089] || 0).toFixed(1)),
+      calcium: Math.round(byId[1087] || 0),
+      vitD: Number((byId[1114] || 0).toFixed(1)),
+      vitC: Math.round(byId[1162] || 0),
+      magnesium: Math.round(byId[1090] || 0),
+      sodium: Math.round(byId[1093] || 0),
+    },
+    perServingMicros: {
+      iron: Number((((byId[1089] || 0) * servingGrams) / 100).toFixed(1)),
+      calcium: Math.round(((byId[1087] || 0) * servingGrams) / 100),
+      vitD: Number((((byId[1114] || 0) * servingGrams) / 100).toFixed(1)),
+      vitC: Math.round(((byId[1162] || 0) * servingGrams) / 100),
+      magnesium: Math.round(((byId[1090] || 0) * servingGrams) / 100),
+      sodium: Math.round(((byId[1093] || 0) * servingGrams) / 100),
+    },
+  };
 }
 
 function normalizeOpenFoodFactsProduct(p, allowZeroMacro = false) {
@@ -107,14 +219,10 @@ function normalizeOpenFoodFactsProduct(p, allowZeroMacro = false) {
   const baseName = String(p.product_name || p.product_name_en || '').trim();
   if (!baseName) return null;
 
-  const displayName = brand && !baseName.toLowerCase().includes(brand.toLowerCase())
-    ? `${baseName} (${brand})`
-    : baseName;
-
-  // Smart default scaling role based on macro dominance
-  let defaultRole = 'fixed';
-  if (carbs >= 40 && carbs > protein * 2) defaultRole = 'carb';
-  else if (protein >= 18 && protein > carbs) defaultRole = 'protein';
+  const displayName =
+    brand && !baseName.toLowerCase().includes(brand.toLowerCase())
+      ? `${baseName} (${brand})`
+      : baseName;
 
   const servingGrams = Number(p.serving_quantity) || 100;
 
@@ -124,8 +232,8 @@ function normalizeOpenFoodFactsProduct(p, allowZeroMacro = false) {
     name: displayName,
     brand,
     source: 'Open Food Facts',
-    defaultGrams: Math.min(300, Math.max(15, Math.round(servingGrams))),
-    defaultRole,
+    defaultGrams: Math.min(350, Math.max(15, Math.round(servingGrams))),
+    defaultRole: pickDefaultRole(carbs, protein),
     per100g: {
       carbs: Number(carbs.toFixed(1)),
       protein: Number(protein.toFixed(1)),
@@ -149,43 +257,148 @@ function normalizeOpenFoodFactsProduct(p, allowZeroMacro = false) {
   };
 }
 
-export async function lookupBarcode(barcode, { allowZeroMacro = false } = {}) {
+async function searchUsdaFdc(query, apiKey, pageSize = 10) {
+  const key = (apiKey || '').trim() || 'DEMO_KEY';
+  const url = `https://api.nal.usda.gov/fdc/v1/foods/search?query=${encodeURIComponent(query)}&pageSize=${pageSize}&api_key=${encodeURIComponent(key)}`;
+  const resp = await fetch(url);
+  if (resp.status === 429) {
+    return { items: [], rateLimited: true };
+  }
+  if (!resp.ok) {
+    return { items: [], error: `USDA HTTP ${resp.status}` };
+  }
+  const data = await resp.json();
+  const foods = Array.isArray(data.foods) ? data.foods : [];
+  return {
+    items: foods.map((f) => normalizeUsdaFood(f)).filter(Boolean),
+    rateLimited: false,
+  };
+}
+
+async function searchOffV2ByBrand(query) {
+  const slug = String(query || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s+/g, '-');
+  if (!slug) return [];
+
+  const firstWord = slug.split('-')[0];
+  const trySlug = async (tag) => {
+    const resp = await fetch(
+      `https://world.openfoodfacts.org/api/v2/search?brands_tags=${encodeURIComponent(tag)}&sort_by=unique_scans_n&page_size=8&fields=code,product_name,product_name_en,brands,serving_quantity,nutriments`
+    );
+    if (!resp.ok) return [];
+    const data = await resp.json();
+    const list = Array.isArray(data.products) ? data.products : [];
+    return list.map((p) => normalizeOpenFoodFactsProduct(p)).filter(Boolean);
+  };
+
+  const primary = await trySlug(slug);
+  if (primary.length > 0 || !firstWord || firstWord === slug) return primary;
+
+  // If user typed "Chobani strawberry", query brand "chobani" and rank items matching the rest of the words
+  const broad = await trySlug(firstWord);
+  const restTerms = slug.split('-').slice(1).filter((t) => t.length >= 2);
+  if (restTerms.length === 0) return broad;
+  const matched = broad.filter((item) => {
+    const hay = item.name.toLowerCase();
+    return restTerms.some((t) => hay.includes(t));
+  });
+  return matched.length > 0 ? matched : broad.slice(0, 4);
+}
+
+export async function lookupBarcode(barcode, { allowZeroMacro = false, usdaApiKey = '' } = {}) {
   const clean = String(barcode || '').replace(/[^\d]/g, '');
   if (clean.length < 6) {
     throw new Error('Enter a valid barcode (at least 6 digits).');
   }
-  const resp = await fetch(
-    `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(clean)}.json?fields=code,product_name,product_name_en,brands,serving_quantity,nutriments`
-  );
-  if (!resp.ok) throw new Error(`Product lookup failed (HTTP ${resp.status}).`);
-  const data = await resp.json();
-  if (data.status !== 1 || !data.product) {
-    throw new Error(`Barcode ${clean} wasn't found in Open Food Facts. You can add it manually below.`);
+
+  // 1. Open Food Facts v2 product endpoint (global barcode coverage + full CORS)
+  try {
+    const resp = await fetch(
+      `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(clean)}.json?fields=code,product_name,product_name_en,brands,serving_quantity,nutriments`
+    );
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data.status === 1 && data.product) {
+        const normalized = normalizeOpenFoodFactsProduct(data.product, allowZeroMacro);
+        if (normalized) return normalized;
+      }
+    }
+  } catch {
+    // fall through to USDA FDC barcode fallback
   }
-  const normalized = normalizeOpenFoodFactsProduct(data.product, allowZeroMacro);
-  if (!normalized) {
-    throw new Error(`Found "${data.product.product_name || clean}" but nutrition per 100g is incomplete. Add it manually.`);
+
+  // 2. Fallback to USDA FoodData Central GTIN/UPC lookup (strong US grocery coverage)
+  try {
+    const key = (usdaApiKey || '').trim() || 'DEMO_KEY';
+    const resp = await fetch(
+      `https://api.nal.usda.gov/fdc/v1/foods/search?query=${encodeURIComponent(clean)}&dataType=Branded&pageSize=3&api_key=${encodeURIComponent(key)}`
+    );
+    if (resp.ok) {
+      const data = await resp.json();
+      const foods = Array.isArray(data.foods) ? data.foods : [];
+      const exact = foods.find((f) => String(f.gtinUpc || '').replace(/^0+/, '') === clean.replace(/^0+/, '')) || foods[0];
+      const normalized = normalizeUsdaFood(exact, allowZeroMacro);
+      if (normalized) return normalized;
+    }
+  } catch {
+    // ignore and show clear user message below
   }
-  return normalized;
+
+  throw new Error(`Barcode ${clean} wasn't found in Open Food Facts or USDA FoodData Central. You can add it manually below.`);
 }
 
-export async function searchPackagedFoods(query) {
+export async function searchPackagedFoods(query, { usdaApiKey = '' } = {}) {
   const q = String(query || '').trim();
-  if (q.length < 2) return [];
-  const resp = await fetch(
-    `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(q)}&search_simple=1&action=process&json=1&page_size=8&fields=code,product_name,product_name_en,brands,serving_quantity,nutriments`
-  );
-  if (!resp.ok) return [];
-  const data = await resp.json();
-  const list = Array.isArray(data.products) ? data.products : [];
-  const results = [];
-  const seen = new Set();
-  for (const p of list) {
-    const item = normalizeOpenFoodFactsProduct(p);
-    if (item && !seen.has(item.name.toLowerCase())) {
-      seen.add(item.name.toLowerCase());
-      results.push(item);
-    }
+  if (q.length < 2) {
+    return { results: [], sources: [], warning: '' };
   }
-  return results.slice(0, 6);
+
+  const [usdaRes, offRes] = await Promise.allSettled([
+    searchUsdaFdc(q, usdaApiKey, 10),
+    searchOffV2ByBrand(q),
+  ]);
+
+  const usdaItems = usdaRes.status === 'fulfilled' ? usdaRes.value.items || [] : [];
+  const usdaRateLimited = usdaRes.status === 'fulfilled' && Boolean(usdaRes.value.rateLimited);
+  const offItems = offRes.status === 'fulfilled' ? offRes.value || [] : [];
+
+  const merged = [];
+  const seen = new Set();
+  const pushUnique = (item) => {
+    const key = item.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!seen.has(key)) {
+      seen.add(key);
+      merged.push(item);
+    }
+  };
+
+  // Interleave USDA (verified + branded) and Open Food Facts for best coverage
+  const maxLen = Math.max(usdaItems.length, offItems.length);
+  for (let i = 0; i < maxLen; i += 1) {
+    if (usdaItems[i]) pushUnique(usdaItems[i]);
+    if (offItems[i]) pushUnique(offItems[i]);
+  }
+
+  const sources = [];
+  if (usdaItems.length > 0) sources.push('USDA FoodData Central');
+  if (offItems.length > 0) sources.push('Open Food Facts');
+
+  let warning = '';
+  if (usdaRateLimited && merged.length === 0) {
+    warning =
+      'USDA shared demo search hit its hourly limit. Add your own free USDA API key in Sync (takes 10 sec) for 1,000 searches/hr, or scan the package barcode.';
+  } else if (usdaRateLimited) {
+    warning = 'Showing Open Food Facts matches (add a free personal USDA key in Sync for unlimited USDA Branded search).';
+  } else if (merged.length === 0) {
+    warning = `No online matches for "${q}". Try a shorter brand name (e.g. "Chobani" or "Clif"), scan the barcode, or tap Write Custom Food.`;
+  }
+
+  return {
+    results: merged.slice(0, 12),
+    sources,
+    warning,
+  };
 }

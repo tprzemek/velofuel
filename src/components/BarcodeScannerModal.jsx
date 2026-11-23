@@ -4,7 +4,7 @@ import { lookupBarcode } from '../engine/foodDatabase';
 import { foodDisplayToGrams, foodUnitLabel, formatFoodAmount, gramsToFoodDisplay } from '../engine/units';
 import NumericInput from './NumericInput';
 
-export default function BarcodeScannerModal({ isOpen, onClose, onSelectFood, units, mode = 'food' }) {
+export default function BarcodeScannerModal({ isOpen, onClose, onSelectFood, units, mode = 'food', usdaApiKey = '' }) {
   const readerId = useId().replace(/:/g, '');
   const scannerRef = useRef(null);
   const [cameraActive, setCameraActive] = useState(false);
@@ -51,7 +51,7 @@ export default function BarcodeScannerModal({ isOpen, onClose, onSelectFood, uni
     setLookupError('');
     setFoundFood(null);
     try {
-      const food = await lookupBarcode(code, { allowZeroMacro: mode === 'supplement' });
+      const food = await lookupBarcode(code, { allowZeroMacro: mode === 'supplement', usdaApiKey });
       if (mode === 'supplement') {
         onSelectFood(food);
         handleClose();

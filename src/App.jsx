@@ -20,7 +20,7 @@ import {
   migrateStaple,
 } from './engine/defaultData';
 import { computeBiometricsSummary } from './engine/biometricsEngine';
-import { computeDailyPlan, scaleStapleToTargets } from './engine/fuelingEngine';
+import { computeDailyPlan, DEFAULT_MEAL_SLOTS, scaleStapleToTargets } from './engine/fuelingEngine';
 import { syncIntervalsDirect } from './engine/intervalsClient';
 import { exchangeWithingsCode, fetchWithingsMeasurements } from './engine/withingsClient';
 import { formatFoodAmount, getUnits } from './engine/units';
@@ -57,6 +57,8 @@ function loadInitialState() {
         sessions: Array.isArray(parsed.sessions) && parsed.sessions.length ? parsed.sessions : createDefaultSessions(),
         biometrics: Array.isArray(parsed.biometrics) && parsed.biometrics.length ? parsed.biometrics : createDefaultBiometrics(),
         logsByDate: parsed.logsByDate || createDefaultLogs(),
+        customMealsByDate: parsed.customMealsByDate || {},
+        timelineOrderByDate: parsed.timelineOrderByDate || {},
         intervalsConfig: { athleteId: '0', apiKey: '', autoSync: true, ...(parsed.intervalsConfig || {}) },
         withingsConfig: {
           clientId: '',
@@ -79,6 +81,8 @@ function loadInitialState() {
     sessions: createDefaultSessions(),
     biometrics: createDefaultBiometrics(),
     logsByDate: createDefaultLogs(),
+    customMealsByDate: {},
+    timelineOrderByDate: {},
     intervalsConfig: { athleteId: '0', apiKey: '', autoSync: true },
     withingsConfig: { clientId: '', clientSecret: '', accessToken: '', refreshToken: '', expiresAt: 0 },
     aiConfig: { provider: 'auto', apiKey: '' },
@@ -149,6 +153,9 @@ export default function App() {
   const tomorrowSession = sessionByDate.get(shiftIsoDate(selectedDate, 1)) || null;
   const yesterdaySession = sessionByDate.get(shiftIsoDate(selectedDate, -1)) || null;
 
+  const selectedDayMeals = state.customMealsByDate?.[selectedDate] || null;
+  const selectedDayOrder = state.timelineOrderByDate?.[selectedDate] || null;
+
   const dailyPlan = useMemo(
     () =>
       computeDailyPlan({
@@ -158,8 +165,19 @@ export default function App() {
         todaySession: selectedSession,
         tomorrowSession,
         yesterdaySession,
+        dayMeals: selectedDayMeals,
+        dayTimelineOrder: selectedDayOrder,
       }),
-    [selectedDate, state.profile, biometricsSummary, selectedSession, tomorrowSession, yesterdaySession]
+    [
+      selectedDate,
+      state.profile,
+      biometricsSummary,
+      selectedSession,
+      tomorrowSession,
+      yesterdaySession,
+      selectedDayMeals,
+      selectedDayOrder,
+    ]
   );
 
   const selectedLogs = useMemo(
@@ -522,16 +540,102 @@ export default function App() {
 
   const handleReorderTimeline = (date, newOrder) => {
     const idx = newOrder.indexOf('on_bike');
-    const inferredTiming = idx >= 0 ? (idx <= 1 ? 'morning' : idx === 2 ? 'midday' : 'evening') : undefined;
+    const ratio = idx >= 0 ? idx / Math.max(newOrder.length - 1, 1) : -1;
+    const inferredTiming =
+      ratio >= 0 ? (ratio <= 0.3 ? 'morning' : ratio <= 0.6 ? 'midday' : 'evening') : undefined;
+    const hasCustomSlots = newOrder.some((id) => id.startsWith('custom-'));
     setState((prev) => ({
       ...prev,
-      profile: { ...prev.profile, defaultTimelineOrder: newOrder },
+      profile: hasCustomSlots ? prev.profile : { ...prev.profile, defaultTimelineOrder: newOrder },
+      timelineOrderByDate: {
+        ...(prev.timelineOrderByDate || {}),
+        [date]: newOrder,
+      },
       sessions: prev.sessions.map((s) =>
         s.date === date
           ? { ...s, timelineOrder: newOrder, ...(inferredTiming ? { timing: inferredTiming } : {}) }
           : s
       ),
     }));
+  };
+
+  const handleDeleteMealSlot = (date, slotId, slotLabel) => {
+    const currentMeals = state.customMealsByDate?.[date] || DEFAULT_MEAL_SLOTS;
+    if (currentMeals.length <= 1) {
+      showToast('Keep at least one meal slot for the day.');
+      return;
+    }
+    const remainingMeals = currentMeals.filter((m) => m.id !== slotId);
+    const currentOrder = dailyPlan.meals.map((m) => m.slot);
+    const nextOrder = currentOrder.filter((id) => id !== slotId);
+
+    setState((prev) => ({
+      ...prev,
+      customMealsByDate: {
+        ...(prev.customMealsByDate || {}),
+        [date]: remainingMeals,
+      },
+      timelineOrderByDate: {
+        ...(prev.timelineOrderByDate || {}),
+        [date]: nextOrder,
+      },
+      logsByDate: {
+        ...prev.logsByDate,
+        [date]: (prev.logsByDate[date] || []).filter((l) => l.slot !== slotId),
+      },
+    }));
+    showToast(
+      `Removed ${slotLabel || 'meal'} — macros redistributed across your ${remainingMeals.length} remaining meal${
+        remainingMeals.length > 1 ? 's' : ''
+      }.`
+    );
+  };
+
+  const handleAddMealSlot = (date, { label, size = 'snack', insertIndex }) => {
+    const cleanLabel = String(label || '').trim();
+    if (!cleanLabel) return;
+    const newId = `custom-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`;
+    const newMeal = {
+      id: newId,
+      label: cleanLabel,
+      kind: 'custom',
+      size: size === 'meal' ? 'meal' : 'snack',
+      location: 'Custom',
+    };
+    const currentMeals = state.customMealsByDate?.[date] || DEFAULT_MEAL_SLOTS;
+    const nextMeals = [...currentMeals, newMeal];
+    const currentOrder = dailyPlan.meals.map((m) => m.slot);
+    const clampedIdx = Math.min(Math.max(0, Number(insertIndex ?? currentOrder.length)), currentOrder.length);
+    const nextOrder = [...currentOrder];
+    nextOrder.splice(clampedIdx, 0, newId);
+
+    setState((prev) => ({
+      ...prev,
+      customMealsByDate: {
+        ...(prev.customMealsByDate || {}),
+        [date]: nextMeals,
+      },
+      timelineOrderByDate: {
+        ...(prev.timelineOrderByDate || {}),
+        [date]: nextOrder,
+      },
+    }));
+    showToast(`Added "${cleanLabel}" — daily macros rebalanced across ${nextMeals.length} meals.`);
+  };
+
+  const handleResetDayMeals = (date) => {
+    setState((prev) => {
+      const nextCustom = { ...(prev.customMealsByDate || {}) };
+      const nextOrders = { ...(prev.timelineOrderByDate || {}) };
+      delete nextCustom[date];
+      delete nextOrders[date];
+      return {
+        ...prev,
+        customMealsByDate: nextCustom,
+        timelineOrderByDate: nextOrders,
+      };
+    });
+    showToast('Restored default Breakfast, Lunch, Snack & Dinner for this day.');
   };
 
   const handleCompleteRide = (date, actualKj, durationMin) => {
@@ -588,11 +692,46 @@ export default function App() {
     setState((prev) => ({ ...prev, staples: prev.staples.filter((s) => s.id !== id) }));
   };
 
-  const handleSaveSupplement = (supp) => {
-    setState((prev) => ({
-      ...prev,
-      supplements: [supp, ...prev.supplements.filter((s) => s.id !== supp.id)],
-    }));
+  const handleSaveSupplement = (supp, { isEdit = false } = {}) => {
+    setState((prev) => {
+      const exists = prev.supplements.some((s) => s.id === supp.id);
+      const nextSupps = exists
+        ? prev.supplements.map((s) => (s.id === supp.id ? supp : s))
+        : [supp, ...prev.supplements];
+      // Also update today's logged entry if this saved supplement was already logged today
+      const todayLogs = prev.logsByDate[selectedDate] || [];
+      const hasLogged = todayLogs.some((l) => l.type === 'supplement' && l.supplementId === supp.id);
+      const nextLogsByDate = hasLogged
+        ? {
+            ...prev.logsByDate,
+            [selectedDate]: todayLogs.map((l) =>
+              l.type === 'supplement' && l.supplementId === supp.id
+                ? {
+                    ...l,
+                    title: supp.name,
+                    micros: {
+                      fiber: 0,
+                      iron: Number(supp.micros?.iron || 0),
+                      vitC: Number(supp.micros?.vitC || 0),
+                      calcium: Number(supp.micros?.calcium || 0),
+                      vitD: Number(supp.micros?.vitD || 0),
+                      magnesium: Number(supp.micros?.magnesium || 0),
+                      sodium: Number(supp.micros?.sodium || 0),
+                    },
+                  }
+                : l
+            ),
+          }
+        : prev.logsByDate;
+      return {
+        ...prev,
+        supplements: nextSupps,
+        logsByDate: nextLogsByDate,
+      };
+    });
+    if (isEdit) {
+      showToast(`Updated "${supp.name}"!`);
+    }
   };
 
   const handleDeleteSupplement = (id) => {
@@ -684,6 +823,7 @@ export default function App() {
   const handleExportBackup = () => {
     const safeCopy = {
       ...state,
+      profile: { ...state.profile, usdaApiKey: '' },
       intervalsConfig: { ...state.intervalsConfig, apiKey: '' },
       withingsConfig: { clientId: state.withingsConfig.clientId, clientSecret: '', accessToken: '', refreshToken: '', expiresAt: 0 },
       aiConfig: { ...state.aiConfig, apiKey: '' },
@@ -710,6 +850,8 @@ export default function App() {
       sessions: Array.isArray(parsed.sessions) ? parsed.sessions : prev.sessions,
       biometrics: Array.isArray(parsed.biometrics) ? parsed.biometrics : prev.biometrics,
       logsByDate: parsed.logsByDate || prev.logsByDate,
+      customMealsByDate: parsed.customMealsByDate || prev.customMealsByDate,
+      timelineOrderByDate: parsed.timelineOrderByDate || prev.timelineOrderByDate,
     }));
   };
 
@@ -721,6 +863,9 @@ export default function App() {
   const hasAnyConnectedSync = Boolean(
     state.intervalsConfig.apiKey?.trim() || state.withingsConfig.accessToken || state.withingsConfig.refreshToken
   );
+
+  const isDayCustomized = Boolean(state.customMealsByDate?.[selectedDate]);
+  const usdaApiKey = state.profile.usdaApiKey || '';
 
   return (
     <div className="app-shell">
@@ -787,6 +932,7 @@ export default function App() {
             plan={dailyPlan}
             profile={state.profile}
             units={units}
+            usdaApiKey={usdaApiKey}
             session={selectedSession}
             logs={selectedLogs}
             staples={state.staples}
@@ -794,6 +940,7 @@ export default function App() {
             biometricsSummary={biometricsSummary}
             hasIntervalsConnected={Boolean(state.intervalsConfig.apiKey?.trim())}
             bgSyncing={bgSyncing}
+            isDayCustomized={isDayCustomized}
             onResyncNow={() => runBackgroundSync(true)}
             onOpenStapleModal={(slotInfo, remaining) => setStapleModal({ open: true, slotInfo, remaining })}
             onOpenQuickFoodModal={(slotInfo) => setQuickFoodModal({ open: true, slotInfo })}
@@ -804,6 +951,9 @@ export default function App() {
             onLogDailyStack={handleLogDailyStack}
             onSetRideBottleSize={handleSetRideBottleSize}
             onReorderTimeline={handleReorderTimeline}
+            onDeleteMealSlot={handleDeleteMealSlot}
+            onAddMealSlot={handleAddMealSlot}
+            onResetDayMeals={handleResetDayMeals}
             onDeleteLog={handleDeleteLog}
             onLogOnBike={handleLogOnBike}
             onSaveOnBikeLog={handleSaveOnBikeLog}
@@ -816,6 +966,7 @@ export default function App() {
           <StaplesView
             staples={state.staples}
             units={units}
+            usdaApiKey={usdaApiKey}
             onSaveStaple={handleSaveStaple}
             onDeleteStaple={handleDeleteStaple}
           />
@@ -910,6 +1061,7 @@ export default function App() {
         onClose={() => setQuickFoodModal({ open: false, slotInfo: null })}
         slotInfo={quickFoodModal.slotInfo}
         units={units}
+        usdaApiKey={usdaApiKey}
         onLogEntry={handleLogEntry}
       />
 
@@ -926,6 +1078,7 @@ export default function App() {
         onClose={() => setSupplementsModalOpen(false)}
         supplements={state.supplements}
         loggedSupplementIds={loggedSupplementIds}
+        usdaApiKey={usdaApiKey}
         onSaveSupplement={handleSaveSupplement}
         onDeleteSupplement={handleDeleteSupplement}
         onToggleDailyStack={handleToggleDailyStack}

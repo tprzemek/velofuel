@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { X, Pill, Plus, ScanBarcode, Check, Trash2, Star } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { X, Pill, Plus, ScanBarcode, Check, Trash2, Star, Pencil } from 'lucide-react';
 import NumericInput from './NumericInput';
 import BarcodeScannerModal from './BarcodeScannerModal';
 
@@ -31,11 +31,13 @@ export default function SupplementsModal({
   onClose,
   supplements = [],
   loggedSupplementIds = new Set(),
+  usdaApiKey = '',
   onSaveSupplement,
   onDeleteSupplement,
   onToggleDailyStack,
   onLogSupplement,
 }) {
+  const [editingId, setEditingId] = useState(null);
   const [name, setName] = useState('');
   const [iron, setIron] = useState(0);
   const [vitC, setVitC] = useState(0);
@@ -45,10 +47,14 @@ export default function SupplementsModal({
   const [sodium, setSodium] = useState(0);
   const [inDailyStack, setInDailyStack] = useState(true);
   const [scannerOpen, setScannerOpen] = useState(false);
+  const formRef = useRef(null);
 
   if (!isOpen) return null;
 
+  const isEditing = Boolean(editingId);
+
   const resetForm = () => {
+    setEditingId(null);
     setName('');
     setIron(0);
     setVitC(0);
@@ -59,7 +65,21 @@ export default function SupplementsModal({
     setInDailyStack(true);
   };
 
+  const startEdit = (supp) => {
+    setEditingId(supp.id);
+    setName(supp.name || '');
+    setIron(supp.micros?.iron || 0);
+    setVitC(supp.micros?.vitC || 0);
+    setVitD(supp.micros?.vitD || 0);
+    setCalcium(supp.micros?.calcium || 0);
+    setMagnesium(supp.micros?.magnesium || 0);
+    setSodium(supp.micros?.sodium || 0);
+    setInDailyStack(Boolean(supp.inDailyStack));
+    formRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
+  };
+
   const applyTemplate = (tpl) => {
+    setEditingId(null);
     setName(tpl.name);
     setIron(tpl.micros.iron || 0);
     setVitC(tpl.micros.vitC || 0);
@@ -69,11 +89,11 @@ export default function SupplementsModal({
     setSodium(tpl.micros.sodium || 0);
   };
 
-  const handleSaveNew = (e) => {
+  const handleSubmit = (e) => {
     e.preventDefault();
     if (!name.trim()) return;
-    const newSupp = {
-      id: `supp-${Date.now()}`,
+    const suppPayload = {
+      id: editingId || `supp-${Date.now()}`,
       name: name.trim(),
       inDailyStack,
       micros: {
@@ -85,8 +105,10 @@ export default function SupplementsModal({
         sodium: Number(sodium) || 0,
       },
     };
-    onSaveSupplement(newSupp);
-    onLogSupplement(newSupp);
+    onSaveSupplement(suppPayload, { isEdit: isEditing });
+    if (!isEditing) {
+      onLogSupplement(suppPayload);
+    }
     resetForm();
   };
 
@@ -111,7 +133,7 @@ export default function SupplementsModal({
               <Pill size={17} color="var(--code-high)" /> Vitamins &amp; Supplements
             </h2>
             <div className="muted-text" style={{ marginTop: 2 }}>
-              Save what you take daily (e.g. Iron + Vit C, Multivitamin) for 1-tap logging.
+              Save what you take daily (e.g. Iron + Vit C, Multivitamin) and edit doses anytime.
             </div>
           </div>
           <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
@@ -128,11 +150,13 @@ export default function SupplementsModal({
             <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
               {supplements.map((s) => {
                 const isLogged = loggedSupplementIds.has(s.id);
+                const currentlyEditing = editingId === s.id;
                 return (
                   <div
                     key={s.id}
                     style={{
-                      background: 'var(--bg-canvas)',
+                      background: currentlyEditing ? 'var(--code-high-bg)' : 'var(--bg-canvas)',
+                      border: currentlyEditing ? '1px solid var(--code-high)' : '1px solid transparent',
                       borderRadius: 11,
                       padding: '9px 11px',
                       display: 'flex',
@@ -142,7 +166,7 @@ export default function SupplementsModal({
                     }}
                   >
                     <div style={{ minWidth: 0, flex: 1 }}>
-                      <div style={{ fontWeight: 700, fontSize: '0.84rem', display: 'flex', alignItems: 'center', gap: 5 }}>
+                      <div style={{ fontWeight: 700, fontSize: '0.84rem', display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
                         {s.name}
                         {s.inDailyStack && (
                           <span className="carb-badge high" style={{ fontSize: '0.6rem', padding: '2px 6px' }}>
@@ -155,7 +179,7 @@ export default function SupplementsModal({
                       </div>
                     </div>
 
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 3, flexShrink: 0 }}>
                       <button
                         type="button"
                         className="icon-btn"
@@ -171,6 +195,15 @@ export default function SupplementsModal({
                       </button>
                       <button
                         type="button"
+                        className="icon-btn"
+                        onClick={() => startEdit(s)}
+                        title={`Edit ${s.name}`}
+                        aria-label={`Edit ${s.name}`}
+                      >
+                        <Pencil size={14} color={currentlyEditing ? 'var(--code-high)' : undefined} />
+                      </button>
+                      <button
+                        type="button"
                         className={`btn btn-sm ${isLogged ? 'btn-soft' : 'btn-primary'}`}
                         onClick={() => onLogSupplement(s)}
                       >
@@ -179,7 +212,10 @@ export default function SupplementsModal({
                       <button
                         type="button"
                         className="icon-btn"
-                        onClick={() => onDeleteSupplement(s.id)}
+                        onClick={() => {
+                          if (editingId === s.id) resetForm();
+                          onDeleteSupplement(s.id);
+                        }}
                         aria-label={`Delete ${s.name}`}
                       >
                         <Trash2 size={14} />
@@ -194,10 +230,12 @@ export default function SupplementsModal({
 
         <div className="divider" />
 
-        {/* Add New Supplement (Barcode Scan or Manual) */}
-        <form onSubmit={handleSaveNew}>
+        {/* Add or Edit Supplement (Barcode Scan or Manual) */}
+        <form ref={formRef} onSubmit={handleSubmit}>
           <div className="section-header" style={{ marginBottom: 8 }}>
-            <span style={{ fontSize: '0.82rem', fontWeight: 800 }}>Add a Supplement</span>
+            <span style={{ fontSize: '0.84rem', fontWeight: 800, color: isEditing ? 'var(--code-high)' : 'var(--ink-primary)' }}>
+              {isEditing ? 'Edit Saved Supplement' : 'Add a Supplement'}
+            </span>
             <button
               type="button"
               className="btn btn-sm btn-accent"
@@ -207,18 +245,20 @@ export default function SupplementsModal({
             </button>
           </div>
 
-          <div className="chip-row" style={{ marginBottom: 10 }}>
-            {QUICK_SUPPLEMENTS.map((tpl) => (
-              <button
-                key={tpl.name}
-                type="button"
-                className="chip"
-                onClick={() => applyTemplate(tpl)}
-              >
-                + {tpl.name}
-              </button>
-            ))}
-          </div>
+          {!isEditing && (
+            <div className="chip-row" style={{ marginBottom: 10 }}>
+              {QUICK_SUPPLEMENTS.map((tpl) => (
+                <button
+                  key={tpl.name}
+                  type="button"
+                  className="chip"
+                  onClick={() => applyTemplate(tpl)}
+                >
+                  + {tpl.name}
+                </button>
+              ))}
+            </div>
+          )}
 
           <div className="field-grid">
             <div className="field full">
@@ -278,14 +318,30 @@ export default function SupplementsModal({
             Include in my Daily Stack (1-tap log on Today)
           </label>
 
-          <button type="submit" className="btn btn-primary btn-block" disabled={!name.trim()}>
-            <Plus size={15} /> Save &amp; Log Supplement Today
-          </button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button type="submit" className="btn btn-primary" style={{ flex: 1 }} disabled={!name.trim()}>
+              {isEditing ? (
+                <>
+                  <Check size={15} /> Save Supplement Changes
+                </>
+              ) : (
+                <>
+                  <Plus size={15} /> Save &amp; Log Supplement Today
+                </>
+              )}
+            </button>
+            {isEditing && (
+              <button type="button" className="btn" onClick={resetForm}>
+                Cancel
+              </button>
+            )}
+          </div>
         </form>
 
         <BarcodeScannerModal
           isOpen={scannerOpen}
           mode="supplement"
+          usdaApiKey={usdaApiKey}
           onClose={() => setScannerOpen(false)}
           onSelectFood={(product) => {
             const m = product.perServingMicros || product.per100g || {};

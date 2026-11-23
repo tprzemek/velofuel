@@ -18,7 +18,7 @@ const PORTION_MODES = [
   { value: 'protein', label: 'Auto-adjust for muscle (Protein)' },
 ];
 
-export default function StaplesView({ staples, units, onSaveStaple, onDeleteStaple }) {
+export default function StaplesView({ staples, units, usdaApiKey = '', onSaveStaple, onDeleteStaple }) {
   const [editor, setEditor] = useState(null);
   const foodUnit = foodUnitLabel(units);
 
@@ -301,7 +301,7 @@ export default function StaplesView({ staples, units, onSaveStaple, onDeleteStap
               <div style={{ fontSize: '0.76rem', fontWeight: 800, marginBottom: 8 }}>
                 Add Ingredient (Scan Barcode · Search · Custom)
               </div>
-              <FoodPickerPanel onAddIngredient={addIngredient} buttonLabel="Add" units={units} />
+              <FoodPickerPanel onAddIngredient={addIngredient} buttonLabel="Add" units={units} usdaApiKey={usdaApiKey} />
             </div>
 
             <button

@@ -146,6 +146,8 @@ export function computeDailyPlan({
   todaySession,
   tomorrowSession,
   yesterdaySession,
+  dayMeals,
+  dayTimelineOrder,
 }) {
   const weightKg = biometricsSummary?.trendWeightKg || profile.defaultWeightKg || 74;
   const bodyFatPct = biometricsSummary?.latestBodyFatPct || profile.defaultBodyFatPct || 15;
@@ -314,7 +316,8 @@ export function computeDailyPlan({
     proteinG,
     fatG,
     onBikePlan,
-    timelineOrder: todaySession?.timelineOrder || profile.defaultTimelineOrder,
+    dayMeals,
+    timelineOrder: dayTimelineOrder || todaySession?.timelineOrder || profile.defaultTimelineOrder,
   });
 
   const microTargets = {
@@ -368,15 +371,34 @@ export function computeDailyPlan({
   };
 }
 
+export const DEFAULT_MEAL_SLOTS = [
+  { id: 'breakfast', label: 'Breakfast', kind: 'breakfast', size: 'meal', location: 'Home' },
+  { id: 'lunch', label: 'Lunch', kind: 'lunch', size: 'meal', location: 'Work / Home' },
+  { id: 'snack', label: 'Snack', kind: 'snack', size: 'snack', location: 'Home / Work' },
+  { id: 'dinner', label: 'Dinner', kind: 'dinner', size: 'meal', location: 'Home (Auto-Balances Day)' },
+];
+
 export const DEFAULT_TIMELINE_ORDER = ['breakfast', 'lunch', 'snack', 'on_bike', 'dinner'];
 
 function inferTimingFromOrder(order, fallbackTiming = 'evening') {
   if (!Array.isArray(order)) return fallbackTiming;
   const idx = order.indexOf('on_bike');
   if (idx < 0) return fallbackTiming;
-  if (idx <= 1) return 'morning';
-  if (idx === 2) return 'midday';
+  const ratio = idx / Math.max(order.length - 1, 1);
+  if (ratio <= 0.3) return 'morning';
+  if (ratio <= 0.6) return 'midday';
   return 'evening';
+}
+
+function distributeByWeights(total, weights) {
+  const sum = weights.reduce((acc, w) => acc + Math.max(0.01, w), 0);
+  if (sum <= 0 || weights.length === 0) return [];
+  const raw = weights.map((w) => Math.round(total * (Math.max(0.01, w) / sum)));
+  const diff = total - raw.reduce((a, b) => a + b, 0);
+  if (raw.length > 0) {
+    raw[raw.length - 1] = Math.max(0, raw[raw.length - 1] + diff);
+  }
+  return raw;
 }
 
 function buildMealTimeline({
@@ -387,6 +409,7 @@ function buildMealTimeline({
   proteinG,
   fatG,
   onBikePlan,
+  dayMeals,
   timelineOrder,
 }) {
   const hasRide = Boolean(todaySession && todaySession.durationMin > 0 && todaySession.intensity !== 'rest');
@@ -394,20 +417,54 @@ function buildMealTimeline({
   const onBikeCarbs = onBikePlan?.totalCarbs || 0;
   const offBikeCarbs = Math.max(80, carbsG - onBikeCarbs);
 
-  let cWeights = { breakfast: 0.25, lunch: 0.3, snack: 0.15, dinner: 0.3 };
+  const activeMealDefs =
+    Array.isArray(dayMeals) && dayMeals.length > 0 ? dayMeals : DEFAULT_MEAL_SLOTS;
+
+  let baseCWeights = { breakfast: 0.25, lunch: 0.3, snack: 0.15, dinner: 0.3 };
   if (hasRide && timing === 'morning') {
-    cWeights = { breakfast: 0.3, lunch: 0.3, snack: 0.16, dinner: 0.24 };
+    baseCWeights = { breakfast: 0.3, lunch: 0.3, snack: 0.16, dinner: 0.24 };
   } else if (hasRide && timing === 'evening') {
-    cWeights = { breakfast: 0.23, lunch: 0.29, snack: 0.2, dinner: 0.28 };
+    baseCWeights = { breakfast: 0.23, lunch: 0.29, snack: 0.2, dinner: 0.28 };
   }
-  if (needsTomorrowPreload) {
-    cWeights.dinner += 0.08;
-    cWeights.breakfast -= 0.04;
-    cWeights.lunch -= 0.04;
+  const basePWeights = { breakfast: 0.25, lunch: 0.28, snack: 0.18, dinner: 0.29 };
+  const baseFWeights = { breakfast: 0.26, lunch: 0.32, snack: 0.12, dinner: 0.3 };
+
+  // Build ordered list of active meal definitions respecting timelineOrder
+  const mealDefsById = new Map(activeMealDefs.map((m) => [m.id, m]));
+  let orderedMealIds;
+  if (Array.isArray(timelineOrder) && timelineOrder.length > 0) {
+    orderedMealIds = timelineOrder.filter((id) => mealDefsById.has(id));
+    for (const m of activeMealDefs) {
+      if (!orderedMealIds.includes(m.id)) orderedMealIds.push(m.id);
+    }
+  } else {
+    orderedMealIds = activeMealDefs.map((m) => m.id);
   }
 
-  const pWeights = { breakfast: 0.25, lunch: 0.28, snack: 0.18, dinner: 0.29 };
-  const fWeights = { breakfast: 0.26, lunch: 0.32, snack: 0.12, dinner: 0.3 };
+  const orderedMealDefs = orderedMealIds.map((id) => mealDefsById.get(id)).filter(Boolean);
+  const preloadTargetId = mealDefsById.has('dinner')
+    ? 'dinner'
+    : orderedMealDefs[orderedMealDefs.length - 1]?.id || null;
+
+  const rawCW = orderedMealDefs.map((m) => {
+    let w =
+      baseCWeights[m.kind] ??
+      (m.size === 'snack' ? 0.16 : 0.28);
+    if (needsTomorrowPreload && m.id === preloadTargetId) {
+      w += 0.08;
+    }
+    return w;
+  });
+  const rawPW = orderedMealDefs.map(
+    (m) => basePWeights[m.kind] ?? (m.size === 'snack' ? 0.16 : 0.28)
+  );
+  const rawFW = orderedMealDefs.map(
+    (m) => baseFWeights[m.kind] ?? (m.size === 'snack' ? 0.12 : 0.28)
+  );
+
+  const allocC = distributeByWeights(offBikeCarbs, rawCW);
+  const allocP = distributeByWeights(proteinG, rawPW);
+  const allocF = distributeByWeights(fatG, rawFW);
 
   const codeForCarbs = (g) => {
     if (g >= 85) return 'HIGH';
@@ -415,49 +472,46 @@ function buildMealTimeline({
     return 'LOW';
   };
 
-  const slotsById = {
-    breakfast: {
-      slot: 'breakfast',
-      label: hasRide && timing === 'morning' ? 'Pre-Ride Breakfast' : 'Breakfast',
-      location: 'Home',
-      timeHint: hasRide && timing === 'morning' ? 'Light & quick energy · Low fiber' : 'Morning',
-      targetCarbs: Math.round(offBikeCarbs * cWeights.breakfast),
-      targetProtein: Math.round(proteinG * pWeights.breakfast),
-      targetFat: Math.round(fatG * fWeights.breakfast),
-    },
-    lunch: {
-      slot: 'lunch',
-      label: 'Lunch',
-      location: 'Work / Home',
-      timeHint: 'Midday',
-      targetCarbs: Math.round(offBikeCarbs * cWeights.lunch),
-      targetProtein: Math.round(proteinG * pWeights.lunch),
-      targetFat: Math.round(fatG * fWeights.lunch),
-    },
-    snack: {
-      slot: 'snack',
-      label: hasRide ? (timing === 'evening' ? 'Pre-Ride Snack' : 'Post-Ride Recovery') : 'Afternoon Snack',
-      location: 'Home / Work',
-      timeHint: hasRide && timing === 'evening' ? '90m before · Low fat' : hasRide ? 'Within 45m · Low fat' : 'Afternoon',
-      targetCarbs: Math.round(offBikeCarbs * cWeights.snack),
-      targetProtein: Math.round(proteinG * pWeights.snack),
-      targetFat: Math.round(fatG * fWeights.snack),
-    },
-    dinner: {
-      slot: 'dinner',
-      label: needsTomorrowPreload ? 'Dinner (Pre-Load)' : 'Dinner',
-      location: 'Home (Auto-Balances Day)',
-      timeHint: 'Evening',
-      targetCarbs: Math.round(offBikeCarbs * cWeights.dinner),
-      targetProtein: Math.round(proteinG * pWeights.dinner),
-      targetFat: Math.round(fatG * fWeights.dinner),
-    },
-  };
+  const slotsById = {};
+  orderedMealDefs.forEach((m, i) => {
+    let label = m.label;
+    let timeHint = m.size === 'snack' ? 'Snack' : 'Meal';
+    if (m.kind === 'breakfast') {
+      label = hasRide && timing === 'morning' ? 'Pre-Ride Breakfast' : m.label || 'Breakfast';
+      timeHint = hasRide && timing === 'morning' ? 'Light & quick energy · Low fiber' : 'Morning';
+    } else if (m.kind === 'lunch') {
+      label = m.label || 'Lunch';
+      timeHint = 'Midday';
+    } else if (m.kind === 'snack') {
+      label = hasRide ? (timing === 'evening' ? 'Pre-Ride Snack' : 'Post-Ride Recovery') : 'Afternoon Snack';
+      timeHint = hasRide && timing === 'evening' ? '90m before · Low fat' : hasRide ? 'Within 45m · Low fat' : 'Afternoon';
+    } else if (m.kind === 'dinner') {
+      label = needsTomorrowPreload ? 'Dinner (Pre-Load)' : m.label || 'Dinner';
+      timeHint = 'Evening';
+    }
+
+    slotsById[m.id] = {
+      slot: m.id,
+      kind: m.kind || 'custom',
+      size: m.size || 'meal',
+      label,
+      baseLabel: m.label,
+      location: m.location || 'Home / Work',
+      timeHint,
+      isPreloadTarget: needsTomorrowPreload && m.id === preloadTargetId,
+      isLastMeal: i === orderedMealDefs.length - 1,
+      targetCarbs: allocC[i] ?? 0,
+      targetProtein: allocP[i] ?? 0,
+      targetFat: allocF[i] ?? 0,
+    };
+  });
 
   if (hasRide && onBikePlan) {
     slotsById.on_bike = {
       slot: 'on_bike',
+      kind: 'on_bike',
       label: 'Training · On-Bike Fuel',
+      baseLabel: 'Training',
       location: 'During Ride',
       timeHint:
         onBikeCarbs > 0
@@ -471,17 +525,20 @@ function buildMealTimeline({
     };
   }
 
-  // Respect user's custom card placement order (or sensible default based on ride timing)
+  // Respect user's custom card placement order (filtering out any removed meals!)
   let effectiveOrder;
   if (Array.isArray(timelineOrder) && timelineOrder.length > 0) {
-    effectiveOrder = [...timelineOrder];
+    effectiveOrder = timelineOrder.filter((id) => Boolean(slotsById[id]));
     for (const id of Object.keys(slotsById)) {
       if (!effectiveOrder.includes(id)) effectiveOrder.push(id);
     }
   } else {
-    effectiveOrder = ['breakfast', 'lunch', 'snack', 'dinner'];
+    effectiveOrder = [...orderedMealIds];
     if (slotsById.on_bike) {
-      const insertIdx = timing === 'morning' ? 1 : timing === 'midday' ? 2 : 3;
+      const insertIdx = Math.min(
+        effectiveOrder.length,
+        timing === 'morning' ? 1 : timing === 'midday' ? 2 : Math.max(0, effectiveOrder.length - 1)
+      );
       effectiveOrder.splice(insertIdx, 0, 'on_bike');
     }
   }
@@ -504,34 +561,30 @@ function buildMealTimeline({
 // Suggest a smart meal for any meal slot tailored to today's carb demand
 export function suggestMealForSlot(slot, staples = [], category = 'MODERATE', remainingMacros = null) {
   if (!slot || !Array.isArray(staples) || staples.length === 0) return null;
-  const pinned = staples.find((s) => s.dailySlot === slot.slot);
-  const slotMatches = staples.filter((s) => s.mealTypes?.includes(slot.slot));
+  const effectiveType = slot.kind === 'custom' ? (slot.size === 'snack' ? 'snack' : 'lunch') : slot.slot;
+  const pinned = staples.find((s) => s.dailySlot === slot.slot || s.dailySlot === effectiveType);
+  const slotMatches = staples.filter((s) => s.mealTypes?.includes(slot.slot) || s.mealTypes?.includes(effectiveType));
   const candidates = slotMatches.length > 0 ? slotMatches : staples;
 
   let chosen = pinned;
   if (!chosen) {
     const isLowCarbDay = category === 'REST' || category === 'LOW';
-    if (slot.slot === 'breakfast' && isLowCarbDay) {
+    if (effectiveType === 'breakfast' && isLowCarbDay) {
       chosen = candidates.find((s) => /egg|avocado|yogurt/i.test(s.name)) || candidates[0];
-    } else if (slot.slot === 'breakfast') {
+    } else if (effectiveType === 'breakfast') {
       chosen = candidates.find((s) => /oat|banana|honey/i.test(s.name)) || candidates[0];
-    } else if (slot.slot === 'dinner' && !isLowCarbDay) {
+    } else if (effectiveType === 'dinner' && !isLowCarbDay) {
       chosen = candidates.find((s) => /rice|pasta/i.test(s.name)) || candidates[0];
-    } else if (slot.slot === 'dinner' && isLowCarbDay) {
+    } else if (effectiveType === 'dinner' && isLowCarbDay) {
       chosen = candidates.find((s) => /salmon|chicken/i.test(s.name)) || candidates[0];
     } else {
       chosen = candidates[0];
     }
   }
 
-  const targetC =
-    slot.slot === 'dinner' && remainingMacros
-      ? Math.max(25, Math.round(remainingMacros.carbs))
-      : slot.targetCarbs;
-  const targetP =
-    slot.slot === 'dinner' && remainingMacros
-      ? Math.max(25, Math.round(remainingMacros.protein))
-      : slot.targetProtein;
+  const useRemaining = Boolean((slot.slot === 'dinner' || slot.isLastMeal) && remainingMacros);
+  const targetC = useRemaining ? Math.max(25, Math.round(remainingMacros.carbs)) : slot.targetCarbs;
+  const targetP = useRemaining ? Math.max(25, Math.round(remainingMacros.protein)) : slot.targetProtein;
 
   const scaled = scaleStapleToTargets(chosen, targetC, targetP);
   return {
@@ -539,7 +592,7 @@ export function suggestMealForSlot(slot, staples = [], category = 'MODERATE', re
     scaled,
     reason: pinned
       ? 'Your pinned favorite, portioned for today'
-      : slot.slot === 'dinner' && remainingMacros
+      : useRemaining
       ? 'Auto-balanced to close out today’s remaining macros'
       : category === 'HIGH' || category === 'VERY_HIGH'
       ? 'High-carb match for today’s hard session'

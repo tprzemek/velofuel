@@ -4,9 +4,12 @@ import { searchLocalWholeFoods, searchPackagedFoods } from '../engine/foodDataba
 import { foodDisplayToGrams, foodUnitLabel, formatFoodAmount } from '../engine/units';
 import BarcodeScannerModal from './BarcodeScannerModal';
 
-export default function FoodPickerPanel({ onAddIngredient, buttonLabel = 'Add', units }) {
+export default function FoodPickerPanel({ onAddIngredient, buttonLabel = 'Add', units, usdaApiKey = '' }) {
   const [query, setQuery] = useState('');
   const [onlineResults, setOnlineResults] = useState([]);
+  const [onlineSources, setOnlineSources] = useState([]);
+  const [onlineWarning, setOnlineWarning] = useState('');
+  const [hasSearchedOnline, setHasSearchedOnline] = useState(false);
   const [searchingOnline, setSearchingOnline] = useState(false);
   const [showCustom, setShowCustom] = useState(false);
   const [scannerOpen, setScannerOpen] = useState(false);
@@ -23,13 +26,20 @@ export default function FoodPickerPanel({ onAddIngredient, buttonLabel = 'Add', 
   const localResults = searchLocalWholeFoods(query);
 
   const handleSearchOnline = async () => {
-    if (query.trim().length < 2) return;
+    const q = query.trim();
+    if (q.length < 2) return;
     setSearchingOnline(true);
+    setOnlineWarning('');
+    setHasSearchedOnline(true);
     try {
-      const found = await searchPackagedFoods(query.trim());
-      setOnlineResults(found);
+      const { results, sources, warning } = await searchPackagedFoods(q, { usdaApiKey });
+      setOnlineResults(results);
+      setOnlineSources(sources);
+      setOnlineWarning(warning || '');
     } catch {
       setOnlineResults([]);
+      setOnlineSources([]);
+      setOnlineWarning('Could not reach USDA / Open Food Facts right now. Check your connection or tap Write Custom Food.');
     } finally {
       setSearchingOnline(false);
     }
@@ -105,11 +115,16 @@ export default function FoodPickerPanel({ onAddIngredient, buttonLabel = 'Add', 
           <input
             className="input"
             style={{ paddingLeft: 30 }}
-            placeholder="Or search foods (oats, berries, skyr, brand...)"
+            placeholder="Search foods or brands (Chobani, Clif, oats, Maurten...)"
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);
-              if (e.target.value.trim().length < 2) setOnlineResults([]);
+              if (e.target.value.trim().length < 2) {
+                setOnlineResults([]);
+                setOnlineSources([]);
+                setOnlineWarning('');
+                setHasSearchedOnline(false);
+              }
             }}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
@@ -129,7 +144,10 @@ export default function FoodPickerPanel({ onAddIngredient, buttonLabel = 'Add', 
             disabled={searchingOnline}
             onClick={handleSearchOnline}
           >
-            <Globe size={13} /> {searchingOnline ? 'Searching packaged foods…' : `Search brands for "${query.trim()}"`}
+            <Globe size={13} />{' '}
+            {searchingOnline
+              ? 'Searching USDA & Brands…'
+              : `Search USDA & brands for "${query.trim()}"`}
           </button>
         )}
         <button
@@ -236,13 +254,19 @@ export default function FoodPickerPanel({ onAddIngredient, buttonLabel = 'Add', 
         </div>
       )}
 
-      {/* Online Open Food Facts packaged results */}
+      {/* Online USDA FoodData Central + Open Food Facts results */}
+      {hasSearchedOnline && onlineWarning && (
+        <div className="notice-strip slate" style={{ fontSize: '0.75rem', padding: '8px 10px' }}>
+          <span>{onlineWarning}</span>
+        </div>
+      )}
+
       {onlineResults.length > 0 && (
         <div>
           <div className="section-kicker" style={{ marginBottom: 6 }}>
-            Packaged &amp; Branded (Open Food Facts)
+            Online Database ({onlineSources.length > 0 ? onlineSources.join(' + ') : 'USDA + Brands'}) · {onlineResults.length} found
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxHeight: 240, overflowY: 'auto' }}>
             {onlineResults.map((item) => (
               <div
                 key={item.id}
@@ -256,10 +280,20 @@ export default function FoodPickerPanel({ onAddIngredient, buttonLabel = 'Add', 
                   background: 'var(--bg-canvas)',
                 }}
               >
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontWeight: 700, fontSize: '0.8rem' }}>{item.name}</div>
-                  <div className="mono" style={{ fontSize: '0.7rem', color: 'var(--ink-muted)' }}>
-                    /100g: {item.per100g.carbs}C · {item.per100g.protein}P · {item.per100g.fat}F
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontWeight: 700, fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+                    <span>{item.name}</span>
+                    {item.source && (
+                      <span
+                        className="carb-badge low"
+                        style={{ fontSize: '0.58rem', padding: '1px 6px', fontWeight: 700 }}
+                      >
+                        {item.source}
+                      </span>
+                    )}
+                  </div>
+                  <div className="mono" style={{ fontSize: '0.7rem', color: 'var(--ink-muted)', marginTop: 2 }}>
+                    /100g: {item.per100g.carbs}C · {item.per100g.protein}P · {item.per100g.fat}F · serving {formatFoodAmount(item.defaultGrams, units)}
                   </div>
                 </div>
                 <button
@@ -275,10 +309,10 @@ export default function FoodPickerPanel({ onAddIngredient, buttonLabel = 'Add', 
         </div>
       )}
 
-      {/* Built-in Verified USDA Whole Foods */}
+      {/* Built-in Verified Whole Foods & Popular Brands */}
       <div>
         <div className="section-kicker" style={{ marginBottom: 6 }}>
-          {query.trim() ? 'Verified Whole Foods (USDA)' : 'Quick-Pick Whole Foods (USDA)'}
+          {query.trim() ? 'Instant Matches (USDA + Popular Brands)' : 'Quick-Pick Whole Foods (USDA)'}
         </div>
         <div
           style={{
@@ -291,8 +325,8 @@ export default function FoodPickerPanel({ onAddIngredient, buttonLabel = 'Add', 
         >
           {localResults.length === 0 ? (
             <div className="muted-text" style={{ fontSize: '0.76rem' }}>
-              No whole-food match. Tap <strong>Search brands</strong>, <strong>Scan Barcode</strong>, or{' '}
-              <strong>Write Custom Food</strong> above.
+              No instant match. Tap <strong>Search USDA &amp; brands</strong> above, <strong>Scan Barcode</strong>, or{' '}
+              <strong>Write Custom Food</strong>.
             </div>
           ) : (
             localResults.map((item) => (
@@ -330,6 +364,7 @@ export default function FoodPickerPanel({ onAddIngredient, buttonLabel = 'Add', 
       <BarcodeScannerModal
         isOpen={scannerOpen}
         units={units}
+        usdaApiKey={usdaApiKey}
         onClose={() => setScannerOpen(false)}
         onSelectFood={(food) => emitFood(food, food.grams, food.role)}
       />

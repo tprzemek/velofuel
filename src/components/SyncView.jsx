@@ -579,6 +579,38 @@ export default function SyncView({
         </div>
       </section>
 
+      {/* Food Database (USDA FoodData Central — same USDA backbone as Cronometer) */}
+      <section className="card">
+        <div className="section-header">
+          <h2 className="section-title">Food Search Database (USDA + Brands)</h2>
+          <span className="section-kicker">Works out of the box</span>
+        </div>
+        <p className="muted-text" style={{ marginBottom: 10 }}>
+          VeloFuel searches <strong>USDA FoodData Central</strong> (400,000+ whole &amp; branded grocery foods) +{' '}
+          <strong>Open Food Facts</strong> directly with zero setup. If you search heavily, paste a free personal USDA key from{' '}
+          <a
+            href="https://fdc.nal.usda.gov/api-key-signup"
+            target="_blank"
+            rel="noreferrer"
+            style={{ color: 'var(--code-high)', fontWeight: 700 }}
+          >
+            fdc.nal.usda.gov <ExternalLink size={11} style={{ verticalAlign: '-1px' }} />
+          </a>{' '}
+          for 1,000 searches/hour.
+        </p>
+        <div className="field">
+          <label htmlFor="usda-api-key">USDA FoodData Central API Key (Optional)</label>
+          <input
+            id="usda-api-key"
+            type="password"
+            className="input mono"
+            placeholder="Optional — uses built-in demo key by default"
+            value={profile.usdaApiKey || ''}
+            onChange={(e) => onUpdateProfile({ usdaApiKey: e.target.value })}
+          />
+        </div>
+      </section>
+
       {/* Athlete Profile */}
       <section className="card">
         <div className="section-header">

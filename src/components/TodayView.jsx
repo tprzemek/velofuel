@@ -21,6 +21,9 @@ import {
   ArrowUp,
   ArrowDown,
   Lightbulb,
+  Plus,
+  X,
+  RotateCcw,
 } from 'lucide-react';
 import {
   BOTTLE_SIZE_OPTIONS,
@@ -77,10 +80,18 @@ function CalorieRing({ eaten, target }) {
   );
 }
 
+const QUICK_CUSTOM_MEALS = [
+  { label: 'Mid-Morning Snack', size: 'snack' },
+  { label: 'Post-Ride Shake', size: 'snack' },
+  { label: 'Second Lunch', size: 'meal' },
+  { label: 'Evening Snack', size: 'snack' },
+];
+
 export default function TodayView({
   plan,
   profile,
   units,
+  usdaApiKey = '',
   session,
   logs,
   staples = [],
@@ -88,6 +99,7 @@ export default function TodayView({
   biometricsSummary,
   hasIntervalsConnected = false,
   bgSyncing = false,
+  isDayCustomized = false,
   onResyncNow,
   onOpenStapleModal,
   onOpenQuickFoodModal,
@@ -98,6 +110,9 @@ export default function TodayView({
   onLogDailyStack,
   onSetRideBottleSize,
   onReorderTimeline,
+  onDeleteMealSlot,
+  onAddMealSlot,
+  onResetDayMeals,
   onDeleteLog,
   onLogOnBike,
   onSaveOnBikeLog,
@@ -143,6 +158,12 @@ export default function TodayView({
 
   // Expandable Suggested Meal per slot (hidden by default so meal cards stay clean!)
   const [openSuggestionSlot, setOpenSuggestionSlot] = useState(null);
+
+  // Inline "+ Add Meal / Snack" customizer state
+  const [addingMeal, setAddingMeal] = useState(false);
+  const [newMealName, setNewMealName] = useState('');
+  const [newMealSize, setNewMealSize] = useState('snack');
+  const [newMealPos, setNewMealPos] = useState(1);
 
   // Pointer-based drag-and-drop timeline card reorder state (works on iOS, Android & Desktop)
   const [draggedSlot, setDraggedSlot] = useState(null);
@@ -290,14 +311,17 @@ export default function TodayView({
 
   const formatLeftLabel = (diff) => (diff >= 0 ? `${diff}g left` : `+${Math.abs(diff)}g over`);
 
-  // Helper for the Training card quick placement dropdown
-  const nonBikeOrder = currentOrder.filter((id) => id !== 'on_bike');
+  // Helper for the Training card quick placement dropdown (using real active meal labels)
+  const nonBikeMeals = plan.meals.filter((m) => m.slot !== 'on_bike');
+  const nonBikeOrder = nonBikeMeals.map((m) => m.slot);
+  const mealCount = nonBikeMeals.length;
   const onBikeIdx = currentOrder.indexOf('on_bike');
+  const firstMealLabel = nonBikeMeals[0]?.baseLabel || nonBikeMeals[0]?.label || 'First Meal';
   const placementOptions = [
-    { idx: 0, label: 'Before Breakfast (Early Morning)' },
-    ...nonBikeOrder.map((id, i) => ({
+    { idx: 0, label: `Before ${firstMealLabel} (Early Morning)` },
+    ...nonBikeMeals.map((m, i) => ({
       idx: i + 1,
-      label: `After ${id.charAt(0).toUpperCase() + id.slice(1)}`,
+      label: `After ${m.baseLabel || m.label}`,
     })),
   ];
 
@@ -305,6 +329,19 @@ export default function TodayView({
     const next = [...nonBikeOrder];
     next.splice(Math.min(Math.max(0, Number(targetIdx)), next.length), 0, 'on_bike');
     onReorderTimeline(plan.date, next);
+  };
+
+  const handleSubmitNewMeal = (e) => {
+    e.preventDefault();
+    if (!newMealName.trim() || !onAddMealSlot) return;
+    onAddMealSlot(plan.date, {
+      label: newMealName.trim(),
+      size: newMealSize,
+      insertIndex: Number(newMealPos),
+    });
+    setNewMealName('');
+    setNewMealSize('snack');
+    setAddingMeal(false);
   };
 
   return (
@@ -431,18 +468,6 @@ export default function TodayView({
         </div>
       </section>
 
-      {/* Tomorrow's Ride Pre-Load Banner */}
-      {plan.needsTomorrowPreload && (
-        <div className="notice-strip green">
-          <Zap size={16} style={{ flexShrink: 0, marginTop: 2 }} />
-          <div>
-            <strong>Tomorrow&apos;s Ride Pre-Load:</strong> Tomorrow is{' '}
-            <strong>{plan.tomorrowTitle || plan.tomorrowCategory}</strong>. Tonight’s dinner carbs are automatically
-            boosted so you wake up ready to ride hard.
-          </div>
-        </div>
-      )}
-
       {/* Water Weight Notice from Withings Scale */}
       {biometricsSummary.glycogenNotice && (
         <div className="notice-strip">
@@ -471,12 +496,120 @@ export default function TodayView({
         </section>
       )}
 
-      {/* Draggable Daily Timeline (Meals + Training Card freely reorderable!) */}
+      {/* Draggable & Fully Customizable Daily Timeline (Add, Remove & Reorder Meals + Training) */}
       <section aria-label="Meal Plan and Training Timeline">
-        <div className="section-header" style={{ padding: '0 2px' }}>
-          <h2 className="section-title">Daily Fuel &amp; Training Timeline</h2>
-          <span className="section-kicker">Drag cards to reorder</span>
+        <div className="section-header" style={{ padding: '0 2px', flexWrap: 'wrap', gap: 6 }}>
+          <div>
+            <h2 className="section-title">Daily Fuel &amp; Training Timeline</h2>
+            <span className="section-kicker">Drag to reorder · Skip or add meals anytime</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            {isDayCustomized && onResetDayMeals && (
+              <button
+                type="button"
+                className="btn btn-sm"
+                style={{ padding: '4px 8px', fontSize: '0.7rem' }}
+                onClick={() => onResetDayMeals(plan.date)}
+                title="Restore default Breakfast, Lunch, Snack & Dinner"
+              >
+                <RotateCcw size={12} /> Reset meals
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn btn-sm btn-soft"
+              style={{ padding: '4px 9px', fontSize: '0.72rem' }}
+              onClick={() => {
+                setNewMealPos(Math.min(1, plan.meals.length));
+                setAddingMeal((v) => !v);
+              }}
+            >
+              <Plus size={13} /> Add Meal
+            </button>
+          </div>
         </div>
+
+        {addingMeal && (
+          <form
+            className="card"
+            onSubmit={handleSubmitNewMeal}
+            style={{ marginBottom: 10, borderColor: 'var(--code-high)', padding: 13 }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <span style={{ fontWeight: 800, fontSize: '0.84rem' }}>Add a Meal or Snack</span>
+              <button type="button" className="icon-btn" onClick={() => setAddingMeal(false)} aria-label="Close add meal">
+                <X size={15} />
+              </button>
+            </div>
+
+            <div className="chip-row" style={{ marginBottom: 9 }}>
+              {QUICK_CUSTOM_MEALS.map((preset) => (
+                <button
+                  key={preset.label}
+                  type="button"
+                  className="chip"
+                  onClick={() => {
+                    setNewMealName(preset.label);
+                    setNewMealSize(preset.size);
+                  }}
+                >
+                  + {preset.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="field-grid">
+              <div className="field full">
+                <label htmlFor="new-meal-name">Meal or Snack Name</label>
+                <input
+                  id="new-meal-name"
+                  className="input"
+                  placeholder="e.g., Mid-Morning Snack, Second Lunch, Late Recovery"
+                  value={newMealName}
+                  onChange={(e) => setNewMealName(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="new-meal-size">Macro Share</label>
+                <select
+                  id="new-meal-size"
+                  className="select"
+                  value={newMealSize}
+                  onChange={(e) => setNewMealSize(e.target.value)}
+                >
+                  <option value="snack">Snack (lighter share)</option>
+                  <option value="meal">Full Meal (standard share)</option>
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="new-meal-pos">Place in Timeline</label>
+                <select
+                  id="new-meal-pos"
+                  className="select"
+                  value={newMealPos}
+                  onChange={(e) => setNewMealPos(Number(e.target.value))}
+                >
+                  <option value={0}>At the top (first)</option>
+                  {plan.meals.map((m, mIdx) => (
+                    <option key={m.slot} value={mIdx + 1}>
+                      After {m.slot === 'on_bike' ? session?.title || 'Training' : m.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+              <button type="submit" className="btn btn-accent btn-sm" style={{ flex: 1 }} disabled={!newMealName.trim()}>
+                <Plus size={14} /> Add &amp; Rebalance Day
+              </button>
+              <button type="button" className="btn btn-sm" onClick={() => setAddingMeal(false)}>
+                Cancel
+              </button>
+            </div>
+          </form>
+        )}
 
         <div className="meal-list">
           {plan.meals.map((slot, idx) => {
@@ -490,7 +623,7 @@ export default function TodayView({
             const onBikeDelta = isOnBike ? (Number(onBikeCarbsInput) || 0) - slot.targetCarbs : 0;
             const suggestionOpen = !isOnBike && openSuggestionSlot === slot.slot;
             const suggestion = suggestionOpen
-              ? suggestMealForSlot(slot, staples, plan.category, slot.slot === 'dinner' ? remaining : null)
+              ? suggestMealForSlot(slot, staples, plan.category, slot.slot === 'dinner' || slot.isLastMeal ? remaining : null)
               : null;
 
             return (
@@ -501,7 +634,7 @@ export default function TodayView({
                   isDragging ? 'dragging' : ''
                 } ${isDragOver ? 'drag-over' : ''}`}
               >
-                {/* Card Header with Pointer Drag Handle (iOS, Android & Desktop) & Reorder Buttons */}
+                {/* Card Header with Pointer Drag Handle (iOS, Android & Desktop), Reorder & Remove Meal */}
                 <div className="meal-slot-head">
                   <div className="meal-slot-title-group">
                     <span
@@ -560,6 +693,22 @@ export default function TodayView({
                     >
                       <ArrowDown size={13} />
                     </button>
+                    {!isOnBike && onDeleteMealSlot && (
+                      <button
+                        type="button"
+                        className="reorder-btn"
+                        disabled={mealCount <= 1}
+                        onClick={() => onDeleteMealSlot(plan.date, slot.slot, slot.label)}
+                        aria-label={`Remove ${slot.label} meal slot`}
+                        title={
+                          mealCount <= 1
+                            ? 'Keep at least one meal for the day'
+                            : `Skip / remove ${slot.label} (macros redistribute to remaining meals)`
+                        }
+                      >
+                        <X size={13} />
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -889,24 +1038,39 @@ export default function TodayView({
                   </>
                 ) : (
                   /* REGULAR MEAL CARD: Prominent Planned Macros Strip (No meal listed by default!) */
-                  <div className="planned-macro-grid" aria-label={`Planned macros for ${slot.label}`}>
-                    <div className="planned-pill carb">
-                      <span className="planned-pill-label">Carbs</span>
-                      <span className="planned-pill-num mono">{slot.targetCarbs}g</span>
+                  <>
+                    {slot.isPreloadTarget && (
+                      <div
+                        className="notice-strip green"
+                        style={{ marginTop: 8, marginBottom: 0, padding: '8px 10px', fontSize: '0.74rem' }}
+                      >
+                        <Zap size={14} style={{ flexShrink: 0, marginTop: 2 }} />
+                        <div>
+                          <strong>Tomorrow&apos;s Ride Pre-Load:</strong> Tomorrow is{' '}
+                          <strong>{plan.tomorrowTitle || plan.tomorrowCategory}</strong> — tonight&apos;s carbs are
+                          boosted so you wake up topped off.
+                        </div>
+                      </div>
+                    )}
+                    <div className="planned-macro-grid" aria-label={`Planned macros for ${slot.label}`}>
+                      <div className="planned-pill carb">
+                        <span className="planned-pill-label">Carbs</span>
+                        <span className="planned-pill-num mono">{slot.targetCarbs}g</span>
+                      </div>
+                      <div className="planned-pill prot">
+                        <span className="planned-pill-label">Protein</span>
+                        <span className="planned-pill-num mono">{slot.targetProtein}g</span>
+                      </div>
+                      <div className="planned-pill fat">
+                        <span className="planned-pill-label">Fat</span>
+                        <span className="planned-pill-num mono">{slot.targetFat}g</span>
+                      </div>
+                      <div className="planned-pill">
+                        <span className="planned-pill-label">Planned</span>
+                        <span className="planned-pill-num mono">{slot.targetKcal}</span>
+                      </div>
                     </div>
-                    <div className="planned-pill prot">
-                      <span className="planned-pill-label">Protein</span>
-                      <span className="planned-pill-num mono">{slot.targetProtein}g</span>
-                    </div>
-                    <div className="planned-pill fat">
-                      <span className="planned-pill-label">Fat</span>
-                      <span className="planned-pill-num mono">{slot.targetFat}g</span>
-                    </div>
-                    <div className="planned-pill">
-                      <span className="planned-pill-label">Planned</span>
-                      <span className="planned-pill-num mono">{slot.targetKcal}</span>
-                    </div>
-                  </div>
+                  </>
                 )}
 
                 {/* Logged Items (ONLY rendered once the user actually logs food/fuel) */}
@@ -1245,6 +1409,20 @@ export default function TodayView({
             );
           })}
         </div>
+
+        {!addingMeal && (
+          <button
+            type="button"
+            className="btn btn-sm"
+            style={{ marginTop: 10, width: '100%', borderStyle: 'dashed' }}
+            onClick={() => {
+              setNewMealPos(plan.meals.length);
+              setAddingMeal(true);
+            }}
+          >
+            <Plus size={14} /> Add Extra Meal or Snack
+          </button>
+        )}
       </section>
 
       {/* Key Endurance Vitamins, Minerals, Practical Sodium & Supplements */}
@@ -1373,6 +1551,7 @@ export default function TodayView({
       <BarcodeScannerModal
         isOpen={Boolean(rideScannerTarget)}
         units={units}
+        usdaApiKey={usdaApiKey}
         onClose={() => setRideScannerTarget(null)}
         onSelectFood={handleScannedRideProduct}
       />
