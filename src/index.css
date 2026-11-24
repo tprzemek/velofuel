@@ -1489,6 +1489,27 @@ input[type='range'] {
   background: var(--code-low);
 }
 
+.demo-mode-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 9px 12px;
+  border-radius: 13px;
+  background: var(--code-med-bg);
+  border: 1px solid rgba(184, 107, 20, 0.28);
+  color: var(--ink-primary);
+  font-size: 0.78rem;
+}
+
+.demo-mode-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 .welcome-shell {
   min-height: 100dvh;
   max-width: 520px;

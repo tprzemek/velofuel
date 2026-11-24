@@ -368,10 +368,20 @@ function normalizeOpenFoodFactsProduct(p, allowZeroMacro = false) {
   };
 }
 
+async function fetchWithTimeout(url, timeoutMs = 6000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function searchUsdaFdc(query, apiKey, pageSize = 10) {
   const key = (apiKey || '').trim() || 'DEMO_KEY';
   const url = `https://api.nal.usda.gov/fdc/v1/foods/search?query=${encodeURIComponent(query)}&pageSize=${pageSize}&api_key=${encodeURIComponent(key)}`;
-  const resp = await fetch(url);
+  const resp = await fetchWithTimeout(url, 6000);
   if (resp.status === 429) {
     return { items: [], rateLimited: true };
   }
@@ -396,8 +406,9 @@ async function searchOffV2ByBrand(query) {
 
   const firstWord = slug.split('-')[0];
   const trySlug = async (tag) => {
-    const resp = await fetch(
-      `https://world.openfoodfacts.org/api/v2/search?brands_tags=${encodeURIComponent(tag)}&sort_by=unique_scans_n&page_size=8&fields=code,product_name,product_name_en,brands,serving_quantity,serving_size,nutriments`
+    const resp = await fetchWithTimeout(
+      `https://world.openfoodfacts.org/api/v2/search?brands_tags=${encodeURIComponent(tag)}&sort_by=unique_scans_n&page_size=8&fields=code,product_name,product_name_en,brands,serving_quantity,serving_size,nutriments`,
+      5000
     );
     if (!resp.ok) return [];
     const data = await resp.json();
@@ -427,8 +438,9 @@ export async function lookupBarcode(barcode, { allowZeroMacro = false, usdaApiKe
 
   // 1. Open Food Facts v2 product endpoint (global barcode coverage + full CORS)
   try {
-    const resp = await fetch(
-      `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(clean)}.json?fields=code,product_name,product_name_en,brands,serving_quantity,serving_size,nutriments`
+    const resp = await fetchWithTimeout(
+      `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(clean)}.json?fields=code,product_name,product_name_en,brands,serving_quantity,serving_size,nutriments`,
+      5000
     );
     if (resp.ok) {
       const data = await resp.json();
@@ -444,8 +456,9 @@ export async function lookupBarcode(barcode, { allowZeroMacro = false, usdaApiKe
   // 2. Fallback to USDA FoodData Central GTIN/UPC lookup (strong US grocery coverage)
   try {
     const key = (usdaApiKey || '').trim() || 'DEMO_KEY';
-    const resp = await fetch(
-      `https://api.nal.usda.gov/fdc/v1/foods/search?query=${encodeURIComponent(clean)}&dataType=Branded&pageSize=3&api_key=${encodeURIComponent(key)}`
+    const resp = await fetchWithTimeout(
+      `https://api.nal.usda.gov/fdc/v1/foods/search?query=${encodeURIComponent(clean)}&dataType=Branded&pageSize=3&api_key=${encodeURIComponent(key)}`,
+      6000
     );
     if (resp.ok) {
       const data = await resp.json();

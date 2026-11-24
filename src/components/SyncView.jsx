@@ -54,6 +54,7 @@ export default function SyncView({
   onDisconnectCloud,
   onRestoreSnapshot,
   onOpenSetupWizard,
+  onReturnToWelcome,
   showToast,
 }) {
   const [syncing, setSyncing] = useState(false);
@@ -1011,7 +1012,7 @@ export default function SyncView({
           </button>
         </div>
 
-        <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border-hairline)' }}>
+        <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border-hairline)', display: 'flex', flexDirection: 'column', gap: 8 }}>
           <button
             type="button"
             className="btn btn-primary btn-block"
@@ -1019,7 +1020,16 @@ export default function SyncView({
           >
             <Wand2 size={14} /> Run Setup Wizard / Reset to Clean Real Profile
           </button>
-          <p className="muted-text" style={{ marginTop: 6, fontSize: '0.72rem' }}>
+          {onReturnToWelcome && (
+            <button
+              type="button"
+              className="btn btn-block"
+              onClick={onReturnToWelcome}
+            >
+              Back to Start Screen (Switch Profile / Restore Cloud)
+            </button>
+          )}
+          <p className="muted-text" style={{ marginTop: 0, fontSize: '0.72rem' }}>
             Pre-fills your current real settings and strips all sample rides &amp; fake weigh-ins cleanly.
           </p>
         </div>

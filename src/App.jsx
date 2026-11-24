@@ -1465,6 +1465,12 @@ export default function App() {
     await persistEnvelopeNow(demo);
   }, [persistEnvelopeNow]);
 
+  const handleReturnToWelcome = useCallback(() => {
+    showWelcomeRef.current = true;
+    setWizardOpen(false);
+    setShowWelcome(true);
+  }, []);
+
   const handleCompleteOnboarding = useCallback(
     async (wizardData) => {
       const isFreshRealSetup =
@@ -1843,6 +1849,32 @@ export default function App() {
       )}
 
       <main className="app-main">
+        {state.isDemoMode && (
+          <div className="demo-mode-bar" role="region" aria-label="Demo Mode">
+            <div style={{ minWidth: 0 }}>
+              <strong>Demo Mode</strong> · Sample rides &amp; weights
+            </div>
+            <div className="demo-mode-actions">
+              <button
+                type="button"
+                className="btn btn-sm btn-accent"
+                style={{ padding: '4px 9px', fontSize: '0.72rem' }}
+                onClick={() => setWizardOpen(true)}
+              >
+                Set Up My Profile
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm"
+                style={{ padding: '4px 9px', fontSize: '0.72rem' }}
+                onClick={handleReturnToWelcome}
+              >
+                Start Screen
+              </button>
+            </div>
+          </div>
+        )}
+
         {activeTab === 'today' && (
           <TodayView
             plan={dailyPlan}
@@ -1957,6 +1989,7 @@ export default function App() {
             onDisconnectCloud={handleDisconnectCloud}
             onRestoreSnapshot={handleRestoreSnapshot}
             onOpenSetupWizard={() => setWizardOpen(true)}
+            onReturnToWelcome={handleReturnToWelcome}
             showToast={showToast}
           />
         )}

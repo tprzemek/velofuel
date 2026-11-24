@@ -194,6 +194,61 @@ def run_qa():
             page.get_by_role("dialog", name="Scan Food Barcode").get_by_role("button", name="Close").click()
 
             # Search a real grocery brand NOT in local list ("Nature Valley") via USDA + OFF v2
+            # Mock OFF v2 search so QA isn't flaky when Open Food Facts returns 503 or USDA DEMO_KEY hits 429
+            def handle_off_brand_search(route):
+                route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body=json.dumps({
+                        "products": [
+                            {
+                                "code": "0016000264694",
+                                "product_name": "Crunchy Oats 'n Honey Granola Bars",
+                                "brands": "Nature Valley",
+                                "serving_quantity": 42,
+                                "serving_size": "2 bars (42g)",
+                                "nutriments": {
+                                    "carbohydrates_100g": 69.0,
+                                    "proteins_100g": 7.1,
+                                    "fat_100g": 16.7,
+                                    "fiber_100g": 4.8,
+                                    "sodium_100g": 0.33,
+                                    "iron_100g": 0.0024,
+                                },
+                            },
+                            {
+                                "code": "0016000439894",
+                                "product_name": "Sweet & Salty Nut Peanut Granola Bar",
+                                "brands": "Nature Valley",
+                                "serving_quantity": 35,
+                                "serving_size": "1 bar (35g)",
+                                "nutriments": {
+                                    "carbohydrates_100g": 57.1,
+                                    "proteins_100g": 11.4,
+                                    "fat_100g": 22.9,
+                                    "fiber_100g": 5.7,
+                                    "sodium_100g": 0.4,
+                                },
+                            },
+                            {
+                                "code": "0016000124790",
+                                "product_name": "Protein Chewy Bars Peanut Butter Dark Chocolate",
+                                "brands": "Nature Valley",
+                                "serving_quantity": 40,
+                                "serving_size": "1 bar (40g)",
+                                "nutriments": {
+                                    "carbohydrates_100g": 35.0,
+                                    "proteins_100g": 25.0,
+                                    "fat_100g": 30.0,
+                                    "fiber_100g": 15.0,
+                                    "sodium_100g": 0.45,
+                                },
+                            },
+                        ]
+                    }),
+                )
+
+            page.route("https://world.openfoodfacts.org/api/v2/search*", handle_off_brand_search)
             search_box = quick_dialog.get_by_placeholder("Search foods or brands (Chobani, Clif, oats, Maurten...)")
             search_box.fill("Nature Valley")
             quick_dialog.get_by_role("button", name='Search USDA & brands for "Nature Valley"').click()
@@ -202,6 +257,7 @@ def run_qa():
 
             # Log the first online brand result!
             quick_dialog.locator("button:has-text('+ Log')").first.click()
+            page.unroute("https://world.openfoodfacts.org/api/v2/search*", handle_off_brand_search)
 
             save_reusable = page.get_by_role("button", name="Save Logged Lunch as Reusable Meal")
             assert save_reusable.is_visible()
@@ -992,8 +1048,8 @@ def run_qa():
 
             # Reload and verify returning user skips Welcome and zero demo data resurrects
             p15.reload(wait_until="networkidle")
+            p15.locator(".meal-slot.training-card", has_text="Morning Endurance Spin").wait_for(state="visible", timeout=5000)
             assert p15.get_by_role("button", name="Set Up My Profile (2 min)").count() == 0, "Returning user must skip Welcome"
-            assert p15.locator(".meal-slot.training-card", has_text="Morning Endurance Spin").is_visible()
             assert p15.get_by_text("Threshold 3×15m").count() == 0
             print("PASS 15: Full 5-Step Real-User Onboarding Wizard + live Intervals.icu pull + clean zero-demo launch verified")
 
@@ -1500,6 +1556,32 @@ def run_qa():
             ctx19d.close()
             print("PASS 19: v12 Regression guards verified (401 Skip Cloud & Launch isolation, rev-1 existingCloudOffer Never-Clobber, Demo Mode Sync Now status, 4A-ADV PAT+GistID paste non-auto-push & Restore)")
 
+            # 20. Exiting Demo Mode: Demo Mode bar -> Back to Start Screen & Set Up My Profile
+            ctx20 = browser.new_context(viewport={"width": 390, "height": 844})
+            p20 = ctx20.new_page()
+            p20.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
+            p20.on("pageerror", lambda err: page_errors.append(str(err)))
+            p20.goto(URL, wait_until="networkidle")
+            p20.get_by_role("button", name="Explore with Demo Data").click()
+            demo_bar = p20.get_by_role("region", name="Demo Mode")
+            demo_bar.wait_for(state="visible", timeout=5000)
+            assert demo_bar.get_by_role("button", name="Set Up My Profile").is_visible()
+            assert demo_bar.get_by_role("button", name="Start Screen").is_visible()
+
+            # Click Start Screen -> returns directly to the first Welcome screen with all 3 choices
+            demo_bar.get_by_role("button", name="Start Screen").click()
+            p20.get_by_role("button", name="Set Up My Profile (2 min)").wait_for(state="visible", timeout=5000)
+            assert p20.get_by_role("button", name="Restore from Cloud Backup").is_visible()
+            assert p20.get_by_role("button", name="Explore with Demo Data").is_visible()
+
+            # Re-enter Demo -> click Set Up My Profile directly on the banner -> opens Step 1 of Setup Wizard
+            p20.get_by_role("button", name="Explore with Demo Data").click()
+            p20.get_by_role("region", name="Demo Mode").get_by_role("button", name="Set Up My Profile").click()
+            p20.get_by_text("Step 1 of 5").wait_for(state="visible", timeout=5000)
+            check_no_jargon(p20, "PASS 20 Demo Mode Exit")
+            ctx20.close()
+            print("PASS 20: Demo Mode exit bar verified (Start Screen & direct Set Up My Profile)")
+
             browser.close()
     finally:
         server.terminate()
@@ -1507,7 +1589,7 @@ def run_qa():
 
     assert not console_errors, f"Console errors detected: {console_errors}"
     assert not page_errors, f"Uncaught page errors detected: {page_errors}"
-    print("ALL 19 QA SUITES PASSED (0 console errors, 0 page errors)!")
+    print("ALL 20 QA SUITES PASSED (0 console errors, 0 page errors)!")
 
 
 if __name__ == "__main__":
