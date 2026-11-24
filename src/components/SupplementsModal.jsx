@@ -1,25 +1,11 @@
 import { useRef, useState } from 'react';
 import { X, Pill, Plus, ScanBarcode, Check, Trash2, Star, Pencil } from 'lucide-react';
+import { ONBOARDING_SUPPLEMENTS } from '../engine/defaultData';
 import NumericInput from './NumericInput';
 import BarcodeScannerModal from './BarcodeScannerModal';
 
 const QUICK_SUPPLEMENTS = [
-  {
-    name: 'Iron + Vitamin C',
-    micros: { iron: 25, vitC: 500, vitD: 0, calcium: 0, magnesium: 0, sodium: 0 },
-  },
-  {
-    name: 'Daily Multivitamin',
-    micros: { iron: 8, vitC: 90, vitD: 25, calcium: 200, magnesium: 100, sodium: 0 },
-  },
-  {
-    name: 'Vitamin D3 (2000 IU)',
-    micros: { iron: 0, vitC: 0, vitD: 50, calcium: 0, magnesium: 0, sodium: 0 },
-  },
-  {
-    name: 'Magnesium Glycinate',
-    micros: { iron: 0, vitC: 0, vitD: 0, calcium: 0, magnesium: 200, sodium: 0 },
-  },
+  ...ONBOARDING_SUPPLEMENTS.map((s) => ({ name: s.name, micros: s.micros })),
   {
     name: 'Electrolyte Tablet (500mg Na)',
     micros: { iron: 0, vitC: 0, vitD: 0, calcium: 20, magnesium: 25, sodium: 500 },

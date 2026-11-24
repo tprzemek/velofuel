@@ -12,10 +12,18 @@ import {
   Scale,
   ExternalLink,
   Copy,
+  Cloud,
+  CloudDownload,
+  History,
+  ShieldCheck,
+  Wand2,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { BOTTLE_SIZE_OPTIONS, sumDailyLogs } from '../engine/fuelingEngine';
 import { pushWellnessDirect, syncIntervalsDirect } from '../engine/intervalsClient';
 import { buildWithingsAuthUrl, fetchWithingsMeasurements } from '../engine/withingsClient';
+import { GITHUB_CLASSIC_PAT_URL, listLocalSnapshots } from '../engine/storageEngine';
 import { formatLiquid, getUnits, UNIT_PRESETS } from '../engine/units';
 import NumericInput from './NumericInput';
 
@@ -34,6 +42,18 @@ export default function SyncView({
   todayLogs,
   onExportBackup,
   onImportBackup,
+  cloudConfig,
+  cloudStatus,
+  cloudError,
+  persistentGranted,
+  storageWarning,
+  isDemoMode,
+  onUpdateCloudConfig,
+  onManualCloudSync,
+  onManualCloudRestore,
+  onDisconnectCloud,
+  onRestoreSnapshot,
+  onOpenSetupWizard,
   showToast,
 }) {
   const [syncing, setSyncing] = useState(false);
@@ -43,10 +63,34 @@ export default function SyncView({
   const [withingsSyncing, setWithingsSyncing] = useState(false);
   const [withingsError, setWithingsError] = useState('');
   const [withingsReport, setWithingsReport] = useState(null);
+  const [snapshotsOpen, setSnapshotsOpen] = useState(false);
+  const [snapshots, setSnapshots] = useState([]);
+  const [snapshotsLoading, setSnapshotsLoading] = useState(false);
   const backupRef = useRef(null);
 
   const units = getUnits(profile);
   const redirectUri = `${window.location.origin}${window.location.pathname}`;
+  const isStandalonePwa =
+    typeof window !== 'undefined' &&
+    (window.matchMedia?.('(display-mode: standalone)')?.matches || window.navigator?.standalone === true);
+
+  const loadSnapshotsList = async () => {
+    setSnapshotsLoading(true);
+    try {
+      const list = await listLocalSnapshots();
+      setSnapshots(list);
+    } finally {
+      setSnapshotsLoading(false);
+    }
+  };
+
+  const handleToggleSnapshots = () => {
+    const nextOpen = !snapshotsOpen;
+    setSnapshotsOpen(nextOpen);
+    if (nextOpen) {
+      loadSnapshotsList();
+    }
+  };
 
   const updateUnits = (patch) => {
     onUpdateProfile({ units: { ...units, ...patch } });
@@ -207,15 +251,236 @@ export default function SyncView({
   };
 
   const isWithingsConnected = Boolean(withingsConfig?.accessToken || withingsConfig?.refreshToken);
+  const hasCloudToken = Boolean(cloudConfig?.githubToken?.trim());
+  const statusBadgeText =
+    cloudStatus === 'synced'
+      ? 'Cloud Synced ✓'
+      : cloudStatus === 'syncing'
+      ? 'Syncing…'
+      : cloudStatus === 'error'
+      ? 'Sync Error'
+      : 'Saved locally';
+  const statusBadgeClass =
+    cloudStatus === 'synced'
+      ? 'high'
+      : cloudStatus === 'error'
+      ? 'low'
+      : 'med';
 
   return (
     <>
+      {/* Cloud Sync & Durable Storage (3-Tier Sustaining Storage) */}
+      <section className="card" aria-label="Cloud Sync and Durable Storage">
+        <div className="section-header">
+          <h1 className="section-title" style={{ fontSize: '1.08rem', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Cloud size={16} color="var(--code-high)" /> Cloud Sync &amp; Durable Storage
+          </h1>
+          <span className={`carb-badge ${statusBadgeClass}`} style={{ fontSize: '0.66rem' }}>
+            {statusBadgeText}
+          </span>
+        </div>
+
+        <div className="notice-strip green" style={{ marginTop: 8, marginBottom: 10 }}>
+          <ShieldCheck size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+          <div style={{ fontSize: '0.76rem' }}>
+            <strong>On-Device Durable Mirror Active</strong> (LocalStorage + IndexedDB + rolling 14-day snapshots
+            {persistentGranted ? ' · Persistent storage granted' : ''}).
+            {isDemoMode && (
+              <div style={{ marginTop: 3 }}>
+                Currently exploring <strong>Demo Mode</strong> — run the Setup Wizard below whenever you are ready for your real profile.
+              </div>
+            )}
+          </div>
+        </div>
+
+        {storageWarning && (
+          <div className="notice-strip" style={{ marginBottom: 10 }}>
+            <AlertCircle size={15} style={{ flexShrink: 0, marginTop: 2 }} />
+            <span>{storageWarning}</span>
+          </div>
+        )}
+
+        <p className="muted-text" style={{ marginBottom: 10 }}>
+          Sync automatically across your phone, laptop, and Home Screen app using a free private <strong>GitHub Gist</strong> in your own GitHub account. Your GitHub token stays strictly on this device and is never uploaded.
+        </p>
+
+        <div className="notice-strip slate" style={{ marginBottom: 10, flexDirection: 'column', gap: 5, fontSize: '0.74rem' }}>
+          <div>
+            <strong>1-click setup:</strong>{' '}
+            <a
+              href={GITHUB_CLASSIC_PAT_URL}
+              target="_blank"
+              rel="noreferrer"
+              style={{ color: 'var(--code-high)', fontWeight: 700 }}
+            >
+              Create private gist-only GitHub token <ExternalLink size={11} style={{ verticalAlign: '-1px' }} />
+            </a>{' '}
+            (only <code>gist</code> scope — zero repo access), then paste below.
+          </div>
+          <div>
+            {isStandalonePwa ? (
+              <>
+                <strong>Home Screen App Active ✓</strong> — Exempt from Safari&apos;s 7-day browser cleanup. Keep Cloud Sync linked so your logs follow you anywhere.
+              </>
+            ) : (
+              <>
+                <strong>iPhone / Safari Tip:</strong> Regular Safari tabs and Home Screen apps store data in separate containers. Add VeloFuel to your Home Screen AND link Cloud Sync so your logs are always safe and synced.
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="field-grid">
+          <div className="field full">
+            <label htmlFor="cloud-gh-token">GitHub Personal Access Token (Device-only)</label>
+            <input
+              id="cloud-gh-token"
+              type="password"
+              className="input mono"
+              placeholder="ghp_... or github_pat_..."
+              value={cloudConfig?.githubToken || ''}
+              onChange={(e) => onUpdateCloudConfig({ githubToken: e.target.value })}
+            />
+          </div>
+          <div className="field full">
+            <label htmlFor="cloud-gist-id">Backup Gist ID (Optional — auto-found if blank)</label>
+            <input
+              id="cloud-gist-id"
+              className="input mono"
+              placeholder="Auto-finds or creates private VeloFuel Cloud Sync Backup"
+              value={cloudConfig?.gistId || ''}
+              onChange={(e) => onUpdateCloudConfig({ gistId: e.target.value })}
+            />
+          </div>
+        </div>
+
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 8,
+            marginTop: 10,
+            fontSize: '0.76rem',
+            fontWeight: 600,
+            cursor: 'pointer',
+            lineHeight: 1.35,
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={Boolean(cloudConfig?.syncThirdPartyKeys)}
+            onChange={(e) => onUpdateCloudConfig({ syncThirdPartyKeys: e.target.checked })}
+            style={{ marginTop: 2 }}
+          />
+          <span>
+            Also sync Intervals.icu, Withings &amp; food API keys inside my private backup (leave unchecked to keep keys on this device only)
+          </span>
+        </label>
+
+        <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="btn btn-accent"
+            style={{ flex: 1, minWidth: 120 }}
+            disabled={cloudStatus === 'syncing'}
+            onClick={onManualCloudSync}
+          >
+            <RefreshCw size={14} className={cloudStatus === 'syncing' ? 'spin' : ''} />{' '}
+            {cloudStatus === 'syncing' ? 'Syncing…' : 'Sync Now'}
+          </button>
+          <button
+            type="button"
+            className="btn"
+            style={{ flex: 1, minWidth: 135 }}
+            disabled={cloudStatus === 'syncing'}
+            onClick={onManualCloudRestore}
+          >
+            <CloudDownload size={14} /> Restore from Cloud
+          </button>
+          {hasCloudToken && (
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={onDisconnectCloud}
+            >
+              Disconnect
+            </button>
+          )}
+        </div>
+
+        {cloudConfig?.lastSyncedAt && (
+          <p className="muted-text" style={{ marginTop: 8, fontSize: '0.72rem' }}>
+            Last cloud sync: {new Date(cloudConfig.lastSyncedAt).toLocaleString()}
+          </p>
+        )}
+
+        {cloudError && (
+          <div className="notice-strip" style={{ marginTop: 10 }}>
+            <AlertCircle size={15} style={{ flexShrink: 0, marginTop: 2 }} />
+            <span>{cloudError}</span>
+          </div>
+        )}
+
+        {/* Collapsible Rolling 14-Day Local Snapshots Drawer */}
+        <div className="snapshot-drawer-wrap">
+          <button
+            type="button"
+            className="btn btn-sm btn-block"
+            style={{ justifyContent: 'space-between' }}
+            aria-expanded={snapshotsOpen}
+            onClick={handleToggleSnapshots}
+          >
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <History size={14} /> View Local Snapshots (Last 14 Days)
+            </span>
+            {snapshotsOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </button>
+
+          {snapshotsOpen && (
+            <div className="snapshot-list" role="region" aria-label="Local Daily Snapshots">
+              {snapshotsLoading ? (
+                <p className="muted-text" style={{ fontSize: '0.76rem', margin: 0 }}>
+                  Loading local snapshots…
+                </p>
+              ) : snapshots.length === 0 ? (
+                <p className="muted-text" style={{ fontSize: '0.76rem', margin: 0 }}>
+                  No local daily snapshots saved yet. Snapshots appear automatically as you log meals or weigh-ins.
+                </p>
+              ) : (
+                snapshots.map((snap) => (
+                  <div key={snap.date} className="snapshot-row">
+                    <div>
+                      <div className="snapshot-date mono">{snap.date}</div>
+                      <div className="muted-text" style={{ fontSize: '0.71rem' }}>
+                        {snap.summary?.loggedMeals || 0} logged items · {snap.summary?.weighIns || 0} weigh-ins ·{' '}
+                        {snap.summary?.workouts || 0} workouts
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-primary"
+                      aria-label={`Restore snapshot ${snap.date}`}
+                      onClick={async () => {
+                        await onRestoreSnapshot(snap);
+                        loadSnapshotsList();
+                      }}
+                    >
+                      Restore
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+      </section>
+
       {/* Units & Defaults (Metric / Imperial / Mixed) */}
       <section className="card">
         <div className="section-header">
-          <h1 className="section-title" style={{ fontSize: '1.08rem', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <h2 className="section-title" style={{ fontSize: '1.08rem', display: 'flex', alignItems: 'center', gap: 6 }}>
             <Ruler size={16} /> Units &amp; Bottle Defaults
-          </h1>
+          </h2>
         </div>
         <p className="muted-text" style={{ marginBottom: 10 }}>
           Choose Metric, Imperial, or mix them freely (e.g. liters/ml for bottles and oz/lbs for food &amp; weight).
@@ -744,6 +1009,19 @@ export default function SyncView({
           <button type="button" className="btn" style={{ flex: 1 }} onClick={() => backupRef.current?.click()}>
             <Upload size={14} /> Restore JSON
           </button>
+        </div>
+
+        <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border-hairline)' }}>
+          <button
+            type="button"
+            className="btn btn-primary btn-block"
+            onClick={onOpenSetupWizard}
+          >
+            <Wand2 size={14} /> Run Setup Wizard / Reset to Clean Real Profile
+          </button>
+          <p className="muted-text" style={{ marginTop: 6, fontSize: '0.72rem' }}>
+            Pre-fills your current real settings and strips all sample rides &amp; fake weigh-ins cleanly.
+          </p>
         </div>
       </section>
     </>

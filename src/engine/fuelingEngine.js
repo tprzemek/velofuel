@@ -571,6 +571,7 @@ export function computeDailyPlan({
   const fuelOptions = {
     defaultBottleMl: profile.defaultBottleMl || 650,
     electrolyteTabMg: profile.electrolyteTabMg || 500,
+    sweatRate: profile.defaultSweatRate || 'medium',
     units: getUnits(profile),
   };
 
@@ -625,6 +626,11 @@ export function computeDailyPlan({
       : `Tomorrow is easy/rest: eat a normal protein + carb meal soon after training to avoid evening cravings — no extra sugar loading needed.`,
   };
 
+  const resolvedDayMeals =
+    Array.isArray(dayMeals) && dayMeals.length > 0
+      ? dayMeals
+      : getDefaultMealSlotsForProfile(profile);
+
   const meals = buildMealTimeline({
     category,
     workouts,
@@ -634,8 +640,9 @@ export function computeDailyPlan({
     proteinG,
     fatG,
     totalOnBikeCarbs,
-    dayMeals,
+    dayMeals: resolvedDayMeals,
     timelineOrder: dayTimelineOrder || primaryWorkout?.timelineOrder || profile.defaultTimelineOrder,
+    defaultWorkoutTiming: profile.defaultWorkoutTiming || 'evening',
   });
 
   const microTargets = {
@@ -699,6 +706,59 @@ export const DEFAULT_MEAL_SLOTS = [
   { id: 'dinner', label: 'Dinner', kind: 'dinner', size: 'meal', location: 'Home (Auto-Balances Day)' },
 ];
 
+export const MEAL_TEMPLATE_PRESETS = {
+  standard_4: {
+    id: 'standard_4',
+    label: 'Breakfast + Lunch + Snack + Dinner',
+    description: '4 balanced slots — ideal for most riders',
+    slots: DEFAULT_MEAL_SLOTS,
+  },
+  three_meals: {
+    id: 'three_meals',
+    label: '3 Meals Only',
+    description: 'Breakfast, Lunch, and Dinner with bigger portions',
+    slots: [
+      DEFAULT_MEAL_SLOTS[0],
+      DEFAULT_MEAL_SLOTS[1],
+      DEFAULT_MEAL_SLOTS[3],
+    ],
+  },
+  five_meals: {
+    id: 'five_meals',
+    label: '5 Meals / 2 Snacks',
+    description: 'Adds a Morning Snack for high-volume days',
+    slots: [
+      DEFAULT_MEAL_SLOTS[0],
+      { id: 'am_snack', label: 'Morning Snack', kind: 'custom', size: 'snack', location: 'Home / Work' },
+      DEFAULT_MEAL_SLOTS[1],
+      DEFAULT_MEAL_SLOTS[2],
+      DEFAULT_MEAL_SLOTS[3],
+    ],
+  },
+};
+
+export function getDefaultMealSlotsForProfile(profile) {
+  const key = profile?.defaultMealTemplate || 'standard_4';
+  const preset = MEAL_TEMPLATE_PRESETS[key] || MEAL_TEMPLATE_PRESETS.standard_4;
+  return preset.slots.map((s) => ({ ...s }));
+}
+
+export function buildTimelineOrderForProfile(mealSlots, workoutTiming = 'evening') {
+  const ids = (Array.isArray(mealSlots) && mealSlots.length > 0 ? mealSlots : DEFAULT_MEAL_SLOTS).map((m) => m.id);
+  const order = [...ids];
+  if (workoutTiming === 'morning') {
+    const bfIdx = order.indexOf('breakfast');
+    order.splice(bfIdx >= 0 ? bfIdx + 1 : 0, 0, 'on_bike');
+  } else if (workoutTiming === 'midday') {
+    const lIdx = order.indexOf('lunch');
+    order.splice(lIdx >= 0 ? lIdx + 1 : Math.min(2, order.length), 0, 'on_bike');
+  } else {
+    const dIdx = order.indexOf('dinner');
+    order.splice(dIdx >= 0 ? dIdx : order.length, 0, 'on_bike');
+  }
+  return order;
+}
+
 export const DEFAULT_TIMELINE_ORDER = ['breakfast', 'lunch', 'snack', 'on_bike', 'dinner'];
 
 function inferTimingFromOrder(order, fallbackTiming = 'evening') {
@@ -706,7 +766,7 @@ function inferTimingFromOrder(order, fallbackTiming = 'evening') {
   const idx = order.indexOf('on_bike');
   if (idx < 0) return fallbackTiming;
   const ratio = idx / Math.max(order.length - 1, 1);
-  if (ratio <= 0.3) return 'morning';
+  if (ratio <= 0.35) return 'morning';
   if (ratio <= 0.6) return 'midday';
   return 'evening';
 }
@@ -733,9 +793,10 @@ function buildMealTimeline({
   totalOnBikeCarbs = 0,
   dayMeals,
   timelineOrder,
+  defaultWorkoutTiming = 'evening',
 }) {
   const hasWorkout = workouts.length > 0;
-  const timing = inferTimingFromOrder(timelineOrder, primaryWorkout?.timing || 'evening');
+  const timing = inferTimingFromOrder(timelineOrder, primaryWorkout?.timing || defaultWorkoutTiming);
   const offBikeCarbs = Math.max(80, carbsG - totalOnBikeCarbs);
 
   const activeMealDefs =
@@ -872,7 +933,7 @@ function buildMealTimeline({
   // Insert any missing workouts (e.g. a newly synced Morning Gym + Evening Ride) at their natural time-of-day slot
   for (const w of workouts) {
     if (!effectiveOrder.includes(w.slotId)) {
-      const wTiming = w.timing || 'evening';
+      const wTiming = w.timing || defaultWorkoutTiming;
       let insertIdx = effectiveOrder.length;
       if (wTiming === 'morning') {
         const bfIdx = effectiveOrder.indexOf('breakfast');

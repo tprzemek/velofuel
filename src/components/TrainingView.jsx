@@ -28,6 +28,7 @@ function SportIcon({ sport, title, size = 13 }) {
 
 export default function TrainingView({
   selectedDate,
+  todayIso,
   onSelectDate,
   sessions,
   profile,
@@ -36,6 +37,7 @@ export default function TrainingView({
   onDeleteSession,
   onNavigateTab,
 }) {
+  const defaultTiming = profile?.defaultWorkoutTiming || 'evening';
   const [editingDate, setEditingDate] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({
@@ -47,7 +49,7 @@ export default function TrainingView({
     actualKj: 0,
     plannedKcal: 350,
     actualKcal: 0,
-    timing: 'evening',
+    timing: defaultTiming,
     status: 'planned',
   });
 
@@ -62,7 +64,12 @@ export default function TrainingView({
     return map;
   }, [sessions]);
 
-  const weekDates = useMemo(() => [-1, 0, 1, 2, 3, 4, 5].map((off) => getIsoDate(off)), []);
+  const effectiveToday = todayIso || getIsoDate(0);
+  const weekDates = useMemo(
+    () => [-1, 0, 1, 2, 3, 4, 5].map((off) => getIsoDate(off)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [effectiveToday]
+  );
 
   const weekPlans = useMemo(() => {
     return weekDates.map((d, idx) => {
@@ -99,7 +106,7 @@ export default function TrainingView({
       actualKj: existing?.actualKj ?? 0,
       plannedKcal: existing?.plannedKcal || existing?.kcal || 280,
       actualKcal: existing?.actualKcal || 0,
-      timing: existing?.timing || (isRide ? 'evening' : 'morning'),
+      timing: existing?.timing || defaultTiming,
       status: existing?.status || 'planned',
     });
   };

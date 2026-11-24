@@ -1,3 +1,4 @@
+import json
 import subprocess
 import time
 from playwright.sync_api import sync_playwright
@@ -46,9 +47,23 @@ def run_qa():
             page.on("pageerror", lambda err: page_errors.append(str(err)))
             nav = page.get_by_role("navigation", name="Main navigation")
 
-            # 1. Load Today tab — verify NO meals listed by default, modern hero ring, prominent planned numbers
+            # 1. Fresh launch -> Welcome screen (3 paths, 0 jargon, 0 premature writes) -> Enter Demo Mode -> Today tab checks
             page.goto(URL, wait_until="networkidle")
+            page.get_by_role("button", name="Set Up My Profile (2 min)").wait_for(state="visible", timeout=5000)
+            assert page.get_by_role("button", name="Set Up My Profile (2 min)").is_visible(), "Expected Welcome primary CTA"
+            assert page.get_by_role("button", name="Restore from Cloud Backup").is_visible(), "Expected Cloud Restore CTA"
+            assert page.get_by_role("button", name="Explore with Demo Data").is_visible(), "Expected Demo Mode CTA"
+            check_no_jargon(page, "Welcome screen")
+            untouched_ls = page.evaluate("() => localStorage.getItem('velofuel_state_v1')")
+            assert untouched_ls is None, f"Fresh Welcome screen MUST NOT persist defaults prematurely! Got: {untouched_ls}"
+
+            page.get_by_role("button", name="Explore with Demo Data").click()
             assert page.get_by_text("VeloFuel").first.is_visible()
+            assert page.locator(".sync-status-pill").is_visible(), "Expected top-bar Sync Status Pill"
+            stepper_box = page.locator(".date-stepper").bounding_box()
+            assert stepper_box is not None and stepper_box["x"] + stepper_box["width"] <= 390, (
+                f"Top-bar date-stepper clipped at 390px: {stepper_box}"
+            )
             check_no_jargon(page, "Today tab")
 
             assert page.locator(".logged-item").count() == 0, "Expected 0 pre-logged meals by default"
@@ -67,7 +82,7 @@ def run_qa():
             assert page.get_by_label("Default Ride Bottle").input_value() == "750", "Expected 750 ml saved as default bottle"
             assert page.get_by_label("USDA FoodData Central API Key (Optional)").is_visible()
             nav.get_by_role("button", name="Today").click()
-            print("PASS 1: Empty default meals, modern hero ring, prominent planned numbers, and default bottle size")
+            print("PASS 1: Welcome 3-path entry, empty default meals, modern hero ring, prominent planned numbers, and default bottle size")
 
             # 2. Tomorrow's Ride Pre-Load belongs inside Dinner card, NOT right below top hero card
             page.get_by_role("button", name="Next day").click()
@@ -682,6 +697,808 @@ def run_qa():
             )
             check_no_jargon(page, "PASS 14 regression checks")
             print("PASS 14: Imperial <1 oz blur preservation & Fuel Wave timeline reorder distribution verified")
+            context.close()
+
+            # =====================================================================
+            # 15. v12: Full 5-Step Real-User Onboarding Wizard (Clean Zero-Demo Launch)
+            # =====================================================================
+            ctx15 = browser.new_context(viewport={"width": 390, "height": 844})
+            p15 = ctx15.new_page()
+            p15.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
+            p15.on("pageerror", lambda err: page_errors.append(str(err)))
+
+            # Stateful mock for GitHub Private Gist API + strict CORS header & PAT audit
+            cloud_store = {
+                "gist_id": None,
+                "content": None,
+                "updated_at": "2026-11-24T12:00:00Z",
+                "etag": '"etag-v1"',
+                "serve_truncated": False,
+                "raw_url_called": False,
+            }
+            cloud_requests = []
+            FORBIDDEN_CORS_HEADERS = {"cache-control", "pragma", "x-github-api-version"}
+
+            def make_gist_route_handler():
+                def handle_gist(route):
+                    req = route.request
+                    url = req.url
+                    method = req.method
+                    headers_lower = {k.lower(): v for k, v in req.headers.items()}
+                    body_text = req.post_data or ""
+
+                    # Assert strict browser CORS header safety on every api.github.com request
+                    if "api.github.com" in url:
+                        for bad in FORBIDDEN_CORS_HEADERS:
+                            assert bad not in headers_lower, (
+                                f"Forbidden CORS preflight header '{bad}' sent to {url}! Headers: {headers_lower}"
+                            )
+                        assert headers_lower.get("authorization", "").startswith("Bearer "), (
+                            f"Expected Bearer auth header on {url}"
+                        )
+                        cloud_requests.append({
+                            "method": method,
+                            "url": url,
+                            "headers": headers_lower,
+                            "body": body_text,
+                        })
+
+                        if method == "GET" and url.rstrip("/").endswith("/gists") or "/gists?" in url:
+                            if cloud_store["gist_id"]:
+                                listing = [{
+                                    "id": cloud_store["gist_id"],
+                                    "public": False,
+                                    "description": "VeloFuel Cloud Sync Backup",
+                                    "updated_at": cloud_store["updated_at"],
+                                    "files": {
+                                        "velofuel-backup.json": {
+                                            "filename": "velofuel-backup.json",
+                                            "size": len(cloud_store["content"] or ""),
+                                        }
+                                    },
+                                }]
+                            else:
+                                listing = []
+                            route.fulfill(status=200, content_type="application/json", body=json.dumps(listing))
+                            return
+
+                        if method == "GET" and "/gists/" in url:
+                            if not cloud_store["gist_id"] or cloud_store["content"] is None:
+                                route.fulfill(status=404, content_type="application/json", body='{"message":"Not Found"}')
+                                return
+                            if headers_lower.get("if-none-match") == cloud_store["etag"]:
+                                route.fulfill(status=304, body="")
+                                return
+                            file_obj = {
+                                "filename": "velofuel-backup.json",
+                                "truncated": bool(cloud_store["serve_truncated"]),
+                                "raw_url": f"https://gist.githubusercontent.com/testuser/{cloud_store['gist_id']}/raw/velofuel-backup.json",
+                                "content": (cloud_store["content"][:40] if cloud_store["serve_truncated"] else cloud_store["content"]),
+                            }
+                            resp_obj = {
+                                "id": cloud_store["gist_id"],
+                                "public": False,
+                                "description": "VeloFuel Cloud Sync Backup",
+                                "updated_at": cloud_store["updated_at"],
+                                "files": {"velofuel-backup.json": file_obj},
+                            }
+                            route.fulfill(
+                                status=200,
+                                content_type="application/json",
+                                headers={"ETag": cloud_store["etag"]},
+                                body=json.dumps(resp_obj),
+                            )
+                            return
+
+                        if method == "POST" and url.rstrip("/").endswith("/gists"):
+                            parsed_body = json.loads(body_text)
+                            assert parsed_body.get("public") is False, "Cloud backup Gist MUST be private (public: false)!"
+                            content = parsed_body["files"]["velofuel-backup.json"]["content"]
+                            assert isinstance(content, str) and len(content) > 20, "Gist content must be non-empty JSON"
+                            assert "ghp_test_token_pass15" not in content, "GitHub PAT MUST NEVER be uploaded to Gist!"
+                            cloud_store["gist_id"] = "gist-pass15-001"
+                            cloud_store["content"] = content
+                            cloud_store["updated_at"] = "2026-11-24T12:05:00Z"
+                            cloud_store["etag"] = f'"etag-{len(cloud_requests)}"'
+                            route.fulfill(
+                                status=201,
+                                content_type="application/json",
+                                headers={"ETag": cloud_store["etag"]},
+                                body=json.dumps({
+                                    "id": cloud_store["gist_id"],
+                                    "public": False,
+                                    "updated_at": cloud_store["updated_at"],
+                                }),
+                            )
+                            return
+
+                        if method == "PATCH" and "/gists/" in url:
+                            parsed_body = json.loads(body_text)
+                            content = parsed_body["files"]["velofuel-backup.json"]["content"]
+                            assert isinstance(content, str) and len(content) > 20, "PATCH content must be non-empty JSON"
+                            assert "ghp_test_token_pass15" not in content, "GitHub PAT MUST NEVER be uploaded to Gist!"
+                            cloud_store["content"] = content
+                            cloud_store["updated_at"] = "2026-11-24T12:10:00Z"
+                            cloud_store["etag"] = f'"etag-{len(cloud_requests)}"'
+                            route.fulfill(
+                                status=200,
+                                content_type="application/json",
+                                headers={"ETag": cloud_store["etag"]},
+                                body=json.dumps({
+                                    "id": cloud_store["gist_id"],
+                                    "public": False,
+                                    "updated_at": cloud_store["updated_at"],
+                                }),
+                            )
+                            return
+
+                    # Headerless raw_url fetch when truncated === true
+                    if "gist.githubusercontent.com" in url:
+                        assert "authorization" not in headers_lower, (
+                            f"raw_url fetch MUST NOT send Authorization header (CORS trap)! Headers: {headers_lower}"
+                        )
+                        cloud_store["raw_url_called"] = True
+                        route.fulfill(status=200, content_type="text/plain", body=cloud_store["content"] or "{}")
+                        return
+
+                    route.abort()
+
+                return handle_gist
+
+            p15.route("https://api.github.com/gists**", make_gist_route_handler())
+            p15.route("https://gist.githubusercontent.com/**", make_gist_route_handler())
+
+            p15.goto(URL, wait_until="networkidle")
+            p15.get_by_role("button", name="Set Up My Profile (2 min)").click()
+
+            # Step 1: Units & Bottles
+            p15.get_by_role("button", name="Mixed (lbs · oz · ml/L)").click()
+            p15.get_by_role("group", name="Default ride bottle size").get_by_role("button", name="750 ml").click()
+            tab_mg = p15.get_by_label("Electrolyte Tablet Sodium (mg per tab)")
+            clear_and_verify_empty(tab_mg, "Onboarding Step 1 Tablet Sodium")
+            tab_mg.type("600")
+            check_no_jargon(p15, "Onboarding Step 1")
+            p15.get_by_role("button", name="Next").click()
+
+            # Step 2: You & Your Goal + Live Preview dynamic update on FTP change
+            p15.get_by_label("Your Name").fill("Alex")
+            p15.get_by_label("Sex").select_option("male")
+            age_in = p15.get_by_label("Age")
+            clear_and_verify_empty(age_in, "Onboarding Step 2 Age")
+            age_in.type("36")
+            ht_in = p15.get_by_label("Height (cm)")
+            clear_and_verify_empty(ht_in, "Onboarding Step 2 Height")
+            ht_in.type("181")
+            wt_in = p15.get_by_label("Current Weight (lbs)")
+            clear_and_verify_empty(wt_in, "Onboarding Step 2 Weight")
+            wt_in.type("165")
+            bf_in = p15.get_by_label("Body Fat % (Optional)")
+            clear_and_verify_empty(bf_in, "Onboarding Step 2 Body Fat")
+            bf_in.type("13.5")
+            ftp_in = p15.get_by_label("Cycling FTP (Watts)")
+            clear_and_verify_empty(ftp_in, "Onboarding Step 2 FTP")
+            ftp_in.type("280")
+            p15.get_by_label("Off-Bike Day Job").select_option("light")
+            p15.get_by_role("button", name="Smart Fat-Loss Cut").click()
+
+            preview_card = p15.locator(".live-preview-card")
+            assert preview_card.get_by_text("Rest Day", exact=True).is_visible()
+            assert preview_card.get_by_text("Hard Ride Day (90m)", exact=True).is_visible()
+            hard_kcal_280 = int(
+                preview_card.locator(".live-preview-col.highlight .live-preview-kcal")
+                .inner_text()
+                .replace("kcal", "")
+                .replace(",", "")
+                .strip()
+            )
+            clear_and_verify_empty(ftp_in, "Onboarding Step 2 FTP live update")
+            ftp_in.type("310")
+            hard_kcal_310 = int(
+                preview_card.locator(".live-preview-col.highlight .live-preview-kcal")
+                .inner_text()
+                .replace("kcal", "")
+                .replace(",", "")
+                .strip()
+            )
+            assert hard_kcal_310 > hard_kcal_280, (
+                f"Live Preview Hard Ride Day kcal must rise with FTP ({hard_kcal_280} -> {hard_kcal_310})"
+            )
+            check_no_jargon(p15, "Onboarding Step 2")
+            p15.get_by_role("button", name="Next").click()
+
+            # Step 3: Live Intervals.icu Test & Pull inside Onboarding
+            today_iso_15 = p15.evaluate(
+                "(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; })()"
+            )
+            tmrw_iso_15 = p15.evaluate(
+                "(() => { const d = new Date(); d.setDate(d.getDate()+1); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; })()"
+            )
+
+            def handle_icu_pass15(route):
+                url = route.request.url
+                if "/activities" in url:
+                    route.fulfill(
+                        status=200,
+                        content_type="application/json",
+                        body=f'[{{"id": 5101, "name": "Morning Endurance Spin", "type": "Ride", "start_date_local": "{today_iso_15}T07:00:00", "moving_time": 5400, "icu_joules": 1180000, "icu_training_load": 82}}]',
+                    )
+                elif "/events" in url:
+                    route.fulfill(
+                        status=200,
+                        content_type="application/json",
+                        body=f'[{{"id": 5202, "name": "Tempo Intervals", "type": "Ride", "start_date_local": "{tmrw_iso_15}T07:30:00", "moving_time": 4500, "joules": 1020000, "icu_training_load": 78}}]',
+                    )
+                elif "/wellness" in url:
+                    route.fulfill(
+                        status=200,
+                        content_type="application/json",
+                        body=f'[{{"id": "{today_iso_15}", "weight": 74.8, "bodyFat": 13.4, "restingHR": 45, "hrv": 82}}]',
+                    )
+                else:
+                    route.fulfill(
+                        status=200,
+                        content_type="application/json",
+                        body='{"name":"Alex","ftp":305,"height":1.82,"sex":"M"}',
+                    )
+
+            p15.route("https://intervals.icu/api/v1/athlete/**", handle_icu_pass15)
+            p15.get_by_label('Athlete ID (or "0")').fill("0")
+            p15.get_by_label("Intervals.icu API Key").fill("test-icu-key-15")
+            p15.get_by_role("button", name="Test & Pull My Rides + FTP").click()
+            p15.get_by_text("Connected!").wait_for(state="visible", timeout=5000)
+            assert p15.get_by_text("FTP 305W").is_visible(), "Expected pulled FTP 305W confirmation in Step 3"
+            check_no_jargon(p15, "Onboarding Step 3")
+            p15.get_by_role("button", name="Next").click()
+
+            # Step 4: Routine, Sweat Rate & Supplements
+            p15.get_by_role("button", name="5 Meals / 2 Snacks").click()
+            p15.get_by_role("group", name="Usual workout time").get_by_role("button", name="Morning").click()
+            p15.get_by_role("group", name="Default sweat rate").get_by_role("button", name="Heavy").click()
+            p15.get_by_label("Daily Multivitamin").uncheck()
+            p15.get_by_label("Vitamin D3 (2000 IU)").check()
+            p15.get_by_label("Magnesium Glycinate").check()
+            check_no_jargon(p15, "Onboarding Step 4")
+            p15.get_by_role("button", name="Next").click()
+
+            # Step 5: Lock In Sustaining Cloud Backup & Launch
+            p15.get_by_label("GitHub Personal Access Token (Stays on this device)").fill("ghp_test_token_pass15")
+            p15.get_by_role("button", name="Connect & Back Up Now").click()
+            p15.get_by_text("Cloud Backup Active ✓").wait_for(state="visible", timeout=5000)
+            check_no_jargon(p15, "Onboarding Step 5")
+            p15.get_by_role("button", name="Launch My VeloFuel").click()
+
+            # Verify clean real-user dashboard
+            p15.locator(".hero-ring-wrap svg").wait_for(state="visible", timeout=5000)
+            p15.wait_for_timeout(300)
+            assert p15.locator(".meal-slot.training-card", has_text="Morning Endurance Spin").is_visible(), (
+                "Expected real Intervals ride on Today"
+            )
+            assert p15.locator(".planned-macro-grid").count() == 5, "Expected 5 meal slots from Step 4 template"
+            assert p15.get_by_text("Threshold 3×15m").count() == 0, "Fake demo ride MUST NOT appear!"
+            sweat_group = p15.get_by_role("group", name="Ride sweat rate")
+            heavy_cls = sweat_group.get_by_role("button", name="Heavy").get_attribute("class") or ""
+            assert "chip-active" in heavy_cls, (
+                f"Expected Heavy default sweat rate active on ride card, got class={heavy_cls!r}"
+            )
+
+            ls_raw_15 = p15.evaluate("() => localStorage.getItem('velofuel_state_v1')")
+            assert ls_raw_15 and "ghp_test_token_pass15" not in ls_raw_15, "GitHub PAT MUST NEVER be stored in velofuel_state_v1!"
+            st15 = json.loads(ls_raw_15)
+            assert st15["profile"]["ftp"] == 305, f"Expected FTP 305, got {st15['profile']['ftp']}"
+            assert st15["profile"]["name"] == "Alex"
+            assert st15["onboardingCompleted"] is True and st15["isDemoMode"] is False and st15["hasUserData"] is True
+            assert not any(str(s.get("id", "")).startswith("sess-") for s in st15["sessions"]), "Zero sess-* demo rides allowed"
+            assert not any(b.get("source") == "withings-sample" for b in st15["biometrics"]), "Zero withings-sample rows allowed"
+
+            # Reload and verify returning user skips Welcome and zero demo data resurrects
+            p15.reload(wait_until="networkidle")
+            assert p15.get_by_role("button", name="Set Up My Profile (2 min)").count() == 0, "Returning user must skip Welcome"
+            assert p15.locator(".meal-slot.training-card", has_text="Morning Endurance Spin").is_visible()
+            assert p15.get_by_text("Threshold 3×15m").count() == 0
+            print("PASS 15: Full 5-Step Real-User Onboarding Wizard + live Intervals.icu pull + clean zero-demo launch verified")
+
+            # =====================================================================
+            # 16. v12: IndexedDB Auto-Recovery After localStorage.clear()
+            # =====================================================================
+            nav15 = p15.get_by_role("navigation", name="Main navigation")
+            p15.locator(".meal-slot[data-slot='lunch']").get_by_role("button", name="Scan / Type").click()
+            qf16 = p15.get_by_role("dialog", name="Scan or Add Food")
+            qf16.get_by_role("tab", name="Quick Add").click()
+            qf16.get_by_label("Label (optional)").fill("Recovery Burrito")
+            qf16.get_by_label("Carbs (g)").type("65")
+            qf16.get_by_label("Protein (g)").type("35")
+            qf16.get_by_label("Fat (g)").type("14")
+            qf16.get_by_role("button", name="Log Quick Add (526 kcal)").click()
+            assert p15.locator(".meal-slot[data-slot='lunch']").get_by_text("Recovery Burrito").is_visible()
+
+            nav15.get_by_role("button", name="Body").click()
+            bw16 = p15.get_by_label("Weight (lbs)")
+            clear_and_verify_empty(bw16, "PASS 16 Body Weight")
+            bw16.type("164.5")
+            p15.get_by_role("button", name="Save Weigh-In").click()
+            nav15.get_by_role("button", name="Today").click()
+
+            # Wait briefly for async IndexedDB mirror, then wipe localStorage completely!
+            p15.wait_for_timeout(600)
+            idb_ok = p15.evaluate(
+                """() => new Promise((resolve) => {
+                    const req = indexedDB.open('velofuel_durable_db', 1);
+                    req.onsuccess = () => {
+                        const db = req.result;
+                        const tx = db.transaction('current', 'readonly');
+                        const getReq = tx.objectStore('current').get('latest');
+                        getReq.onsuccess = () => { db.close(); resolve(Boolean(getReq.result && getReq.result.payload)); };
+                        getReq.onerror = () => { db.close(); resolve(false); };
+                    };
+                    req.onerror = () => resolve(false);
+                })"""
+            )
+            assert idb_ok, "Expected velofuel_durable_db IndexedDB to hold mirrored current state!"
+
+            p15.evaluate("() => localStorage.clear()")
+            assert p15.evaluate("() => localStorage.getItem('velofuel_state_v1')") is None
+
+            p15.reload(wait_until="networkidle")
+            p15.get_by_text("Restored your saved data from durable device storage.").wait_for(state="visible", timeout=5000)
+            assert p15.get_by_role("button", name="Set Up My Profile (2 min)").count() == 0, "Recovery must skip Welcome"
+            assert p15.locator(".meal-slot[data-slot='lunch']").get_by_text("Recovery Burrito").is_visible(), (
+                "Recovery Burrito must be restored from IndexedDB!"
+            )
+            repaired_ls = p15.evaluate("() => localStorage.getItem('velofuel_state_v1')")
+            assert repaired_ls and "Recovery Burrito" in repaired_ls and '"ftp":305' in repaired_ls.replace(" ", "")
+            print("PASS 16: IndexedDB auto-recovery after localStorage.clear() restored 100% of logged meals, weigh-ins & profile")
+
+            # =====================================================================
+            # 17. v12: Cloud Sync Push + Fresh-Device Restore + Never-Clobber Guard + Truncated raw_url
+            # =====================================================================
+            nav15.get_by_role("button", name="Sync").click()
+            req_count_before_paste = len(cloud_requests)
+            p15.get_by_label("GitHub Personal Access Token (Device-only)").fill("ghp_test_token_pass15")
+            # Regression: Pasting a PAT in Sync tab without clicking Sync Now must NOT auto-push after 2.8s!
+            p15.wait_for_timeout(2800)
+            paste_only_reqs = cloud_requests[req_count_before_paste:]
+            assert len(paste_only_reqs) == 0, (
+                f"Expected 0 cloud requests after merely pasting PAT without clicking Sync Now, got: {paste_only_reqs}"
+            )
+            # Explicitly establish cloud link via Sync Now, then verify debounced auto-push on new meal
+            p15.get_by_role("button", name="Sync Now", exact=True).click()
+            p15.locator(".sync-status-pill").get_by_text("Cloud Synced ✓").wait_for(
+                state="visible", timeout=5000
+            )
+            nav15.get_by_role("button", name="Today").click()
+
+            p15.locator(".meal-slot[data-slot='dinner']").get_by_role("button", name="Scan / Type").click()
+            qf17 = p15.get_by_role("dialog", name="Scan or Add Food")
+            qf17.get_by_role("tab", name="Quick Add").click()
+            qf17.get_by_label("Label (optional)").fill("Cloud Sync Pasta")
+            qf17.get_by_label("Carbs (g)").type("90")
+            qf17.get_by_label("Protein (g)").type("32")
+            qf17.get_by_label("Fat (g)").type("10")
+            qf17.get_by_role("button", name="Log Quick Add (578 kcal)").click()
+            assert p15.locator(".meal-slot[data-slot='dinner']").get_by_text("Cloud Sync Pasta").is_visible()
+
+            # Wait for 2.5s debounced auto-push to update private cloud gist
+            p15.wait_for_timeout(3300)
+            assert cloud_store["content"] and "Cloud Sync Pasta" in cloud_store["content"], (
+                "Expected debounced Cloud Sync PATCH to push 'Cloud Sync Pasta'!"
+            )
+            assert "ghp_test_token_pass15" not in cloud_store["content"], "PAT must NEVER appear in cloud gist payload"
+            assert p15.locator(".sync-status-pill").get_by_text("Cloud Synced ✓").is_visible(), (
+                "Expected top-bar badge to show 'Cloud Synced ✓'"
+            )
+
+            # Regression: Re-running Setup Wizard from Sync tab preserves existing real Intervals.icu sessions when Step 3 is skipped
+            nav15.get_by_role("button", name="Sync").click()
+            p15.get_by_role("button", name="Run Setup Wizard / Reset to Clean Real Profile").click()
+            for _ in range(4):
+                p15.get_by_role("button", name="Next").click()
+            p15.get_by_role("button", name="Launch My VeloFuel").click()
+            p15.locator(".hero-ring-wrap svg").wait_for(state="visible", timeout=5000)
+            p15.wait_for_timeout(300)
+            assert p15.locator(".meal-slot.training-card", has_text="Morning Endurance Spin").is_visible(), (
+                "Expected existing real Intervals.icu session to be preserved when re-running Setup Wizard without re-pulling Step 3!"
+            )
+            assert p15.locator(".meal-slot[data-slot='dinner']").get_by_text("Cloud Sync Pasta").is_visible(), (
+                "Expected existing real logged meal to be preserved when re-running Setup Wizard!"
+            )
+            ctx15.close()
+
+            # Device 2: Brand-new wiped browser context (empty localStorage + empty IndexedDB) + truncated: true test!
+            cloud_store["serve_truncated"] = True
+            cloud_store["raw_url_called"] = False
+            req_count_before_dev2 = len(cloud_requests)
+
+            ctx17 = browser.new_context(viewport={"width": 390, "height": 844})
+            p17 = ctx17.new_page()
+            p17.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
+            p17.on("pageerror", lambda err: page_errors.append(str(err)))
+            p17.route("https://api.github.com/gists**", make_gist_route_handler())
+            p17.route("https://gist.githubusercontent.com/**", make_gist_route_handler())
+
+            p17.goto(URL, wait_until="networkidle")
+            p17.get_by_role("button", name="Restore from Cloud Backup").wait_for(state="visible", timeout=5000)
+            assert p17.get_by_role("button", name="Restore from Cloud Backup").is_visible(), (
+                "Wiped Device 2 must show Welcome screen!"
+            )
+            dev2_mutations_before_restore = [
+                r for r in cloud_requests[req_count_before_dev2:] if r["method"] in ("POST", "PATCH")
+            ]
+            assert len(dev2_mutations_before_restore) == 0, (
+                f"Never-Clobber Guard #1 violated! Fired mutations on fresh browser: {dev2_mutations_before_restore}"
+            )
+
+            p17.get_by_role("button", name="Restore from Cloud Backup").click()
+            p17.get_by_label("GitHub Personal Access Token").fill("ghp_test_token_pass15")
+            p17.get_by_role("button", name="Find & Restore My Backup").click()
+
+            p17.locator(".meal-slot[data-slot='dinner']").get_by_text("Cloud Sync Pasta").wait_for(
+                state="visible", timeout=5000
+            )
+            assert cloud_store["raw_url_called"] is True, "Expected headerless raw_url fallback when truncated: true!"
+            assert p17.locator(".planned-macro-grid").count() == 5, "Expected 5-meal template restored from cloud!"
+            assert p17.locator(".sync-status-pill").get_by_text("Cloud Synced ✓").is_visible()
+
+            # Wait 3.2s and confirm zero clobbering PATCH overwrote cloud data (Never-Clobber #2!)
+            p17.wait_for_timeout(3200)
+            assert "Cloud Sync Pasta" in (cloud_store["content"] or ""), (
+                "Never-Clobber Guard #2 violated: cloud backup lost 'Cloud Sync Pasta'!"
+            )
+            check_no_jargon(p17, "PASS 17 Cloud Restore dashboard")
+            print("PASS 17: Cloud Sync debounced push, PAT paste non-auto-push, wizard re-run Intervals preservation, fresh-device restore, Never-Clobber guard & truncated raw_url verified")
+
+            # =====================================================================
+            # 18. v12: Local Daily Snapshots Recovery UI in Sync Tab
+            # =====================================================================
+            nav17 = p17.get_by_role("navigation", name="Main navigation")
+            nav17.get_by_role("button", name="Sync").click()
+            p17.get_by_role("button", name="View Local Snapshots (Last 14 Days)").click()
+            snap_region = p17.get_by_role("region", name="Local Daily Snapshots")
+            assert snap_region.is_visible(), "Expected Local Daily Snapshots drawer to open"
+            assert snap_region.locator(".snapshot-row").count() >= 1, "Expected at least today's snapshot row"
+
+            # Seed a distinct prior-day snapshot containing "Snapshot Oatmeal" into IndexedDB snapshots store
+            p17.evaluate(
+                """() => new Promise((resolve, reject) => {
+                    const st = JSON.parse(localStorage.getItem('velofuel_state_v1'));
+                    const d = new Date();
+                    const today = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+                    const snapPayload = JSON.parse(JSON.stringify(st));
+                    snapPayload.logsByDate[today] = [{
+                        id: 'snap-oatmeal-18',
+                        slot: 'breakfast',
+                        type: 'quick_add',
+                        title: 'Snapshot Oatmeal',
+                        detail: 'Quick macros',
+                        carbs: 62,
+                        protein: 18,
+                        fat: 8,
+                        kcal: 392,
+                        uncertaintyPct: 0,
+                        micros: { fiber: 8, iron: 3, vitC: 5, calcium: 180, vitD: 1, magnesium: 95, sodium: 120 },
+                        loggedAt: '07:30'
+                    }];
+                    const req = indexedDB.open('velofuel_durable_db', 1);
+                    req.onsuccess = () => {
+                        const db = req.result;
+                        const tx = db.transaction('snapshots', 'readwrite');
+                        tx.objectStore('snapshots').put({
+                            date: '2026-11-20',
+                            savedAt: '2026-11-20T08:00:00Z',
+                            summary: { loggedMeals: 1, loggedDays: 1, weighIns: 1, workouts: 1, revision: 2 },
+                            payload: snapPayload,
+                        });
+                        tx.oncomplete = () => { db.close(); resolve(true); };
+                        tx.onerror = () => { db.close(); reject(tx.error); };
+                    };
+                    req.onerror = () => reject(req.error);
+                })"""
+            )
+            # Toggle snapshots drawer closed & open to refresh list, then click 1-tap Restore
+            p17.get_by_role("button", name="View Local Snapshots (Last 14 Days)").click()
+            p17.get_by_role("button", name="View Local Snapshots (Last 14 Days)").click()
+            restore_snap_btn = p17.get_by_role("button", name="Restore snapshot 2026-11-20")
+            restore_snap_btn.wait_for(state="visible", timeout=5000)
+            restore_snap_btn.click()
+            p17.get_by_text("Restored local snapshot from 2026-11-20!").wait_for(state="visible", timeout=5000)
+
+            nav17.get_by_role("button", name="Today").click()
+            assert p17.locator(".meal-slot[data-slot='breakfast']").get_by_text("Snapshot Oatmeal").is_visible(), (
+                "Expected 'Snapshot Oatmeal' restored on Today from Local Daily Snapshots!"
+            )
+            check_no_jargon(p17, "PASS 18 Local Daily Snapshots recovery")
+            print("PASS 18: Local Daily Snapshots Recovery UI verified (list + 1-tap restore)")
+            ctx17.close()
+
+            # =====================================================================
+            # 19. v12 Regression Guards: 401 Skip Cloud & Launch, Step 5 Rev-1 Never-Clobber, Demo Mode Sync Now
+            # =====================================================================
+            # 19A: Step 3 Intervals 401 + Step 5 GitHub 401 + Skip Cloud & Launch must NOT persist rejected credentials
+            ctx19a = browser.new_context(viewport={"width": 390, "height": 844})
+            p19a = ctx19a.new_page()
+            # Ignore ONLY Chromium's native network resource log for intentional 401 mock responses
+            p19a.on(
+                "console",
+                lambda msg: console_errors.append(msg.text)
+                if msg.type == "error" and "status of 401" not in msg.text
+                else None,
+            )
+            p19a.on("pageerror", lambda err: page_errors.append(str(err)))
+            req19a_icu = []
+            req19a_gh = []
+            p19a.route(
+                "https://intervals.icu/api/v1/athlete/**",
+                lambda route: (
+                    req19a_icu.append(route.request.url),
+                    route.fulfill(status=401, content_type="application/json", body='{"error":"Unauthorized"}'),
+                ),
+            )
+            p19a.route(
+                "https://api.github.com/gists**",
+                lambda route: (
+                    req19a_gh.append(f"{route.request.method} {route.request.url}"),
+                    route.fulfill(status=401, content_type="application/json", body='{"message":"Bad credentials"}'),
+                ),
+            )
+            p19a.goto(URL, wait_until="networkidle")
+            p19a.get_by_role("button", name="Set Up My Profile (2 min)").click()
+            p19a.get_by_role("button", name="Next").click()  # Step 1 -> 2
+            p19a.get_by_role("button", name="Next").click()  # Step 2 -> 3
+            p19a.get_by_label("Intervals.icu API Key").fill("invalid-icu-key-401")
+            p19a.get_by_role("button", name="Test & Pull My Rides + FTP").click()
+            p19a.get_by_text("Intervals.icu rejected your credentials").wait_for(state="visible", timeout=5000)
+            p19a.get_by_role("button", name="Next").click()  # Step 3 -> 4
+            p19a.get_by_role("button", name="Next").click()  # Step 4 -> 5
+            p19a.get_by_label("GitHub Personal Access Token (Stays on this device)").fill("ghp_invalid_401_token")
+            p19a.get_by_role("button", name="Connect & Back Up Now").click()
+            p19a.get_by_text("GitHub token expired or invalid").wait_for(state="visible", timeout=5000)
+
+            gh_count_before_skip = len(req19a_gh)
+            icu_count_before_skip = len(req19a_icu)
+            p19a.get_by_role("button", name="Skip Cloud & Launch").click()
+            p19a.locator(".hero-ring-wrap svg").wait_for(state="visible", timeout=5000)
+            p19a.wait_for_timeout(800)
+
+            assert p19a.locator(".sync-status-pill").get_by_text("Saved locally").is_visible(), (
+                "Skip Cloud & Launch after 401 MUST stay 'Saved locally' (never 'Sync Error')!"
+            )
+            cfg19a_raw = p19a.evaluate("() => localStorage.getItem('velofuel_cloud_config_v1')")
+            cfg19a = json.loads(cfg19a_raw) if cfg19a_raw else {}
+            assert not cfg19a.get("githubToken"), f"Rejected GitHub PAT must NOT be saved: {cfg19a}"
+            st19a = json.loads(p19a.evaluate("() => localStorage.getItem('velofuel_state_v1')"))
+            assert st19a["intervalsConfig"]["apiKey"] == "", (
+                f"Rejected Intervals API key must NOT be saved: {st19a['intervalsConfig']}"
+            )
+            assert st19a["intervalsConfig"]["autoSync"] is False
+            assert len(req19a_gh) == gh_count_before_skip, "Zero extra GitHub requests allowed after Skip Cloud & Launch"
+            assert len(req19a_icu) == icu_count_before_skip, "Zero extra Intervals requests allowed after 401 skip"
+            ctx19a.close()
+
+            # 19B: Fresh Step 5 encountering an existing revision: 1 cloud backup must NEVER clobber it on Launch!
+            ctx19b = browser.new_context(viewport={"width": 390, "height": 844})
+            p19b = ctx19b.new_page()
+            p19b.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
+            p19b.on("pageerror", lambda err: page_errors.append(str(err)))
+            rev1_backup_payload = json.dumps({
+                "schemaVersion": 2,
+                "updatedAt": "2026-11-23T10:00:00Z",
+                "revision": 1,
+                "onboardingCompleted": True,
+                "isDemoMode": False,
+                "hasUserData": True,
+                "profile": {"name": "ExistingUser"},
+                "logsByDate": {"2026-11-23": [{"id": "prot-1", "slot": "breakfast", "title": "Protected Rev1 Meal", "carbs": 50, "protein": 20, "fat": 8, "kcal": 352}]},
+                "sessions": [],
+                "biometrics": [],
+            })
+            rev1_mutations = []
+
+            def handle_rev1_gist(route):
+                req = route.request
+                if req.method in ("POST", "PATCH"):
+                    rev1_mutations.append(f"{req.method} {req.url}")
+                    route.fulfill(status=200, content_type="application/json", body='{"id":"gist-rev1"}')
+                    return
+                if "/gists/gist-rev1" in req.url:
+                    route.fulfill(
+                        status=200,
+                        content_type="application/json",
+                        headers={"ETag": '"etag-rev1"'},
+                        body=json.dumps({
+                            "id": "gist-rev1",
+                            "public": False,
+                            "description": "VeloFuel Cloud Sync Backup",
+                            "updated_at": "2026-11-23T10:00:00Z",
+                            "files": {
+                                "velofuel-backup.json": {
+                                    "filename": "velofuel-backup.json",
+                                    "truncated": False,
+                                    "content": rev1_backup_payload,
+                                }
+                            },
+                        }),
+                    )
+                    return
+                route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body=json.dumps([{
+                        "id": "gist-rev1",
+                        "public": False,
+                        "description": "VeloFuel Cloud Sync Backup",
+                        "updated_at": "2026-11-23T10:00:00Z",
+                        "files": {"velofuel-backup.json": {"filename": "velofuel-backup.json"}},
+                    }]),
+                )
+
+            p19b.route("https://api.github.com/gists**", handle_rev1_gist)
+            p19b.goto(URL, wait_until="networkidle")
+            p19b.get_by_role("button", name="Set Up My Profile (2 min)").click()
+            for _ in range(4):
+                p19b.get_by_role("button", name="Next").click()
+            p19b.get_by_label("GitHub Personal Access Token (Stays on this device)").fill("ghp_existing_rev1_tok")
+            p19b.get_by_role("button", name="Connect & Back Up Now").click()
+            p19b.get_by_text("Existing Cloud Backup Found!").wait_for(state="visible", timeout=5000)
+
+            cfg19b_before = p19b.evaluate("() => localStorage.getItem('velofuel_cloud_config_v1')")
+            assert not cfg19b_before or not json.loads(cfg19b_before).get("githubToken"), (
+                f"existingCloudOffer must NOT eagerly persist cloud config before user clicks Restore: {cfg19b_before}"
+            )
+
+            p19b.get_by_role("button", name="Launch My VeloFuel").click()
+            p19b.locator(".hero-ring-wrap svg").wait_for(state="visible", timeout=5000)
+            p19b.wait_for_timeout(3000)
+            assert len(rev1_mutations) == 0, (
+                f"Never-Clobber Guard violated: fresh Step 5 Launch clobbered existing rev-1 cloud gist: {rev1_mutations}"
+            )
+            assert p19b.locator(".sync-status-pill").get_by_text("Saved locally").is_visible()
+            ctx19b.close()
+
+            # 19C: Demo Mode Sync Now with no remote gist stays 'Saved locally' (never 'Cloud Synced ✓')
+            ctx19c = browser.new_context(viewport={"width": 390, "height": 844})
+            p19c = ctx19c.new_page()
+            p19c.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
+            p19c.on("pageerror", lambda err: page_errors.append(str(err)))
+            demo_mutations = []
+
+            def handle_empty_gist(route):
+                if route.request.method in ("POST", "PATCH"):
+                    demo_mutations.append(route.request.method)
+                route.fulfill(status=200, content_type="application/json", body="[]")
+
+            p19c.route("https://api.github.com/gists**", handle_empty_gist)
+            p19c.goto(URL, wait_until="networkidle")
+            p19c.get_by_role("button", name="Explore with Demo Data").click()
+            p19c.locator(".hero-ring-wrap svg").wait_for(state="visible", timeout=5000)
+            p19c.get_by_role("navigation", name="Main navigation").get_by_role("button", name="Sync").click()
+            p19c.get_by_label("GitHub Personal Access Token (Device-only)").fill("ghp_demo_mode_tok")
+            p19c.get_by_role("button", name="Sync Now", exact=True).click()
+            p19c.get_by_text("Demo Mode data isn't uploaded to cloud").wait_for(state="visible", timeout=5000)
+            assert p19c.locator(".sync-status-pill").get_by_text("Saved locally").is_visible(), (
+                "Demo Mode Sync Now with no remote gist must stay 'Saved locally' (never 'Cloud Synced ✓')!"
+            )
+            assert len(demo_mutations) == 0, f"Demo Mode must never POST/PATCH to GitHub Gist: {demo_mutations}"
+            check_no_jargon(p19c, "PASS 19C Demo Mode Sync Now")
+            ctx19c.close()
+
+            # 19D (4A-ADV): Pasting BOTH PAT + existing Backup Gist ID on Sync tab for real user (rev >= 2, lastSyncedAt == "")
+            # must fire 0 GitHub requests over 3.0s+, keep 'Saved locally', and Restore from Cloud cleanly with 0 POST/PATCH!
+            ctx19d = browser.new_context(viewport={"width": 390, "height": 844})
+            p19d = ctx19d.new_page()
+            p19d.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
+            p19d.on("pageerror", lambda err: page_errors.append(str(err)))
+            adv_requests = []
+            adv_today_holder = {"iso": ""}
+
+            def handle_adv_gist(route):
+                req = route.request
+                adv_requests.append({"method": req.method, "url": req.url})
+                if req.method in ("POST", "PATCH"):
+                    route.fulfill(status=200, content_type="application/json", body='{"id":"gist_rev1_offer"}')
+                    return
+                today_key = adv_today_holder["iso"] or "2026-11-24"
+                offer_payload = json.dumps({
+                    "schemaVersion": 2,
+                    "updatedAt": "2026-11-23T10:00:00Z",
+                    "revision": 1,
+                    "onboardingCompleted": True,
+                    "isDemoMode": False,
+                    "hasUserData": True,
+                    "profile": {"name": "Cloud Rider", "ftp": 305},
+                    "logsByDate": {
+                        today_key: [{
+                            "id": "adv-oatmeal-1",
+                            "slot": "breakfast",
+                            "type": "quick_add",
+                            "title": "Existing Cloud Oatmeal",
+                            "detail": "Quick macros",
+                            "carbs": 60,
+                            "protein": 20,
+                            "fat": 8,
+                            "kcal": 392,
+                            "uncertaintyPct": 0,
+                            "loggedAt": "07:30",
+                        }]
+                    },
+                    "sessions": [],
+                    "biometrics": [],
+                })
+                if "/gists/gist_rev1_offer" in req.url:
+                    route.fulfill(
+                        status=200,
+                        content_type="application/json",
+                        headers={"ETag": '"etag-adv-rev1"'},
+                        body=json.dumps({
+                            "id": "gist_rev1_offer",
+                            "public": False,
+                            "description": "VeloFuel Cloud Sync Backup",
+                            "updated_at": "2026-11-23T10:00:00Z",
+                            "files": {
+                                "velofuel-backup.json": {
+                                    "filename": "velofuel-backup.json",
+                                    "truncated": False,
+                                    "content": offer_payload,
+                                }
+                            },
+                        }),
+                    )
+                    return
+                route.fulfill(status=200, content_type="application/json", body="[]")
+
+            p19d.route("https://api.github.com/gists**", handle_adv_gist)
+            p19d.goto(URL, wait_until="networkidle")
+            p19d.get_by_role("button", name="Set Up My Profile (2 min)").wait_for(state="visible", timeout=5000)
+            adv_today_holder["iso"] = p19d.evaluate(
+                "() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }"
+            )
+            p19d.get_by_role("button", name="Set Up My Profile (2 min)").click()
+            for _ in range(4):
+                p19d.get_by_role("button", name="Next").click()
+            p19d.get_by_role("button", name="Skip Cloud & Launch").click()
+            p19d.locator(".hero-ring-wrap svg").wait_for(state="visible", timeout=5000)
+
+            nav19d = p19d.get_by_role("navigation", name="Main navigation")
+            nav19d.get_by_role("button", name="Sync").click()
+            ftp19d = p19d.locator("#prof-ftp")
+            clear_and_verify_empty(ftp19d, "PASS 19D FTP")
+            ftp19d.type("275")
+            p19d.wait_for_timeout(200)
+            st19d = json.loads(p19d.evaluate("() => localStorage.getItem('velofuel_state_v1')"))
+            assert int(st19d.get("revision", 0)) >= 2, f"Expected local rev >= 2 before 4A-ADV paste, got {st19d.get('revision')}"
+
+            # Paste BOTH PAT and existing rev-1 Backup Gist ID WITHOUT clicking Sync Now or Restore from Cloud
+            p19d.locator("#cloud-gh-token").fill("ghp_adv_4a_tok")
+            p19d.locator("#cloud-gist-id").fill("gist_rev1_offer")
+            p19d.wait_for_timeout(3200)
+
+            assert len(adv_requests) == 0, (
+                f"4A-ADV regression violated! Expected 0 GitHub requests after pasting PAT+GistID, got: {adv_requests}"
+            )
+            assert p19d.locator(".sync-status-pill").get_by_text("Saved locally").is_visible(), (
+                "4A-ADV regression violated! Sync pill must remain 'Saved locally' before explicit Sync/Restore!"
+            )
+
+            # Now explicitly click Restore from Cloud -> must restore 'Existing Cloud Oatmeal' with 0 POST/PATCH
+            p19d.get_by_role("button", name="Restore from Cloud", exact=True).click()
+            p19d.locator(".meal-slot[data-slot='breakfast']").get_by_text("Existing Cloud Oatmeal").wait_for(
+                state="visible", timeout=5000
+            )
+            adv_mutations = [r for r in adv_requests if r["method"] in ("POST", "PATCH")]
+            assert len(adv_mutations) == 0, f"4A-ADV Restore from Cloud must issue 0 POST/PATCH, got: {adv_mutations}"
+            assert p19d.locator(".sync-status-pill").get_by_text("Cloud Synced ✓").is_visible()
+
+            # Editing #cloud-gist-id on an already-synced device must reset lastSyncedAt & pause auto-sync
+            nav19d.get_by_role("button", name="Sync").click()
+            p19d.locator("#cloud-gist-id").fill("gist_other_backup")
+            assert p19d.locator(".sync-status-pill").get_by_text("Saved locally").is_visible(), (
+                "Editing #cloud-gist-id on synced device must return status pill to 'Saved locally'!"
+            )
+            cfg19d_after_edit = json.loads(p19d.evaluate("() => localStorage.getItem('velofuel_cloud_config_v1')"))
+            assert cfg19d_after_edit.get("lastSyncedAt") == "", (
+                f"Editing #cloud-gist-id must clear lastSyncedAt, got: {cfg19d_after_edit}"
+            )
+            check_no_jargon(p19d, "PASS 19D 4A-ADV")
+            ctx19d.close()
+            print("PASS 19: v12 Regression guards verified (401 Skip Cloud & Launch isolation, rev-1 existingCloudOffer Never-Clobber, Demo Mode Sync Now status, 4A-ADV PAT+GistID paste non-auto-push & Restore)")
 
             browser.close()
     finally:
@@ -690,7 +1507,7 @@ def run_qa():
 
     assert not console_errors, f"Console errors detected: {console_errors}"
     assert not page_errors, f"Uncaught page errors detected: {page_errors}"
-    print("ALL 14 QA SUITES PASSED (0 console errors, 0 page errors)!")
+    print("ALL 19 QA SUITES PASSED (0 console errors, 0 page errors)!")
 
 
 if __name__ == "__main__":

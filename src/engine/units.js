@@ -84,6 +84,30 @@ export function formatLiquid(ml, units) {
   return `${Math.round(m)} ml`;
 }
 
+// Height (canonical cm)
+export function cmToInches(cm) {
+  const n = Number(cm);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Number((n / 2.54).toFixed(1));
+}
+
+export function inchesToCm(inches) {
+  const n = Number(inches);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.round(n * 2.54);
+}
+
+export function formatHeight(cm, units) {
+  const u = units?.height || 'cm';
+  if (u === 'in') {
+    const totalIn = Math.round(cmToInches(cm));
+    const ft = Math.floor(totalIn / 12);
+    const rem = totalIn % 12;
+    return `${ft}'${rem}" (${totalIn} in)`;
+  }
+  return `${Math.round(Number(cm) || 0)} cm`;
+}
+
 // Practical sodium -> table salt / electrolyte tablet helper
 // Table salt (NaCl) is ~38.8% sodium => 1g salt ≈ 388 mg sodium; 1/4 tsp ≈ 1.5g salt ≈ 580 mg sodium
 export function formatSodiumPractical(mg, tabletMg = 500) {

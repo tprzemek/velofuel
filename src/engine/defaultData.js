@@ -28,9 +28,12 @@ export const DEFAULT_PROFILE = {
   units: DEFAULT_UNITS,
   defaultBottleMl: 650,
   electrolyteTabMg: 500,
+  defaultSweatRate: 'medium', // 'light' | 'medium' | 'heavy'
+  defaultMealTemplate: 'standard_4', // 'standard_4' | 'three_meals' | 'five_meals'
+  defaultWorkoutTiming: 'evening', // 'morning' | 'midday' | 'evening'
 };
 
-export const DEFAULT_SUPPLEMENTS = [
+export const ONBOARDING_SUPPLEMENTS = [
   {
     id: 'supp-iron-vitc',
     name: 'Iron + Vitamin C',
@@ -45,6 +48,25 @@ export const DEFAULT_SUPPLEMENTS = [
     note: 'Covers baseline Vitamin D, B-vitamins & trace minerals.',
     micros: { iron: 8, vitC: 90, vitD: 25, calcium: 200, magnesium: 100, sodium: 0 },
   },
+  {
+    id: 'supp-vitd3',
+    name: 'Vitamin D3 (2000 IU)',
+    inDailyStack: true,
+    note: 'Supports bone health, immunity & recovery — especially in winter.',
+    micros: { iron: 0, vitC: 0, vitD: 50, calcium: 0, magnesium: 0, sodium: 0 },
+  },
+  {
+    id: 'supp-mag',
+    name: 'Magnesium Glycinate',
+    inDailyStack: true,
+    note: 'Take in the evening to support sleep quality & muscle relaxation.',
+    micros: { iron: 0, vitC: 0, vitD: 0, calcium: 0, magnesium: 200, sodium: 0 },
+  },
+];
+
+export const DEFAULT_SUPPLEMENTS = [
+  ONBOARDING_SUPPLEMENTS[0],
+  ONBOARDING_SUPPLEMENTS[1],
 ];
 
 // Flexible Ingredient-List Home Staples — add, edit, or remove ANY ingredient freely!
@@ -459,4 +481,27 @@ export function createDefaultBiometrics() {
 
 export function createDefaultLogs() {
   return {};
+}
+
+export function isSampleSession(session) {
+  if (!session || !session.id) return false;
+  return /^sess-(m\d+|p\d+|0)$/.test(String(session.id));
+}
+
+export function isSampleBiometric(entry) {
+  if (!entry) return false;
+  return entry.source === 'withings-sample';
+}
+
+export function stripDemoData(state) {
+  if (!state || typeof state !== 'object') return state;
+  return {
+    ...state,
+    sessions: Array.isArray(state.sessions)
+      ? state.sessions.filter((s) => !isSampleSession(s))
+      : [],
+    biometrics: Array.isArray(state.biometrics)
+      ? state.biometrics.filter((b) => !isSampleBiometric(b))
+      : [],
+  };
 }

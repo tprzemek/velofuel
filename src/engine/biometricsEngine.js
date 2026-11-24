@@ -186,8 +186,17 @@ export function parseWithingsCsv(csvText) {
     if (!rawDate || !weightKg) continue;
 
     const dateMatch = rawDate.match(/\d{4}-\d{2}-\d{2}/);
-    const isoDate = dateMatch ? dateMatch[0] : new Date(rawDate).toISOString().slice(0, 10);
-    if (!isoDate || isoDate === 'Invalid Da') continue;
+    let isoDate = dateMatch ? dateMatch[0] : '';
+    if (!isoDate) {
+      const parsedDt = new Date(rawDate);
+      if (!Number.isNaN(parsedDt.getTime())) {
+        const yy = parsedDt.getFullYear();
+        const mm = String(parsedDt.getMonth() + 1).padStart(2, '0');
+        const dd = String(parsedDt.getDate()).padStart(2, '0');
+        isoDate = `${yy}-${mm}-${dd}`;
+      }
+    }
+    if (!isoDate) continue;
 
     let bodyFatPct = null;
     if (fatPctIdx >= 0 && cols[fatPctIdx]) {

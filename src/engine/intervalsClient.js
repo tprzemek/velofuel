@@ -107,8 +107,24 @@ export async function syncIntervalsDirect({ athleteId = '0', apiKey, daysBack = 
     fetch(`${base}/events?oldest=${oldestActs}&newest=${newestEvents}&category=WORKOUT`, { headers }),
   ]);
 
-  if (wellnessRes.status === 401 || wellnessRes.status === 403 || athleteRes.status === 401) {
+  if (
+    wellnessRes.status === 401 ||
+    wellnessRes.status === 403 ||
+    athleteRes.status === 401 ||
+    athleteRes.status === 403
+  ) {
     throw new Error('Intervals.icu rejected your credentials. Check your Athlete ID (or use "0") and API key.');
+  }
+
+  if (!athleteRes.ok && !wellnessRes.ok && !activitiesRes.ok && !eventsRes.ok) {
+    const statusHint = athleteRes.status || wellnessRes.status || activitiesRes.status || eventsRes.status;
+    if (statusHint === 404) {
+      throw new Error('Intervals.icu could not find that Athlete ID (HTTP 404). Try "0" for your own account.');
+    }
+    if (statusHint === 429) {
+      throw new Error('Intervals.icu rate limit reached (HTTP 429). Please wait a moment and try again.');
+    }
+    throw new Error(`Could not connect to Intervals.icu right now (HTTP ${statusHint || 'error'}). Please try again.`);
   }
 
   const athleteRaw = athleteRes.ok ? await athleteRes.json() : null;
@@ -253,6 +269,12 @@ export async function syncIntervalsDirect({ athleteId = '0', apiKey, daysBack = 
   return {
     ok: true,
     syncedAt: new Date().toISOString(),
+    endpointsOk: {
+      athlete: athleteRes.ok,
+      wellness: wellnessRes.ok,
+      activities: activitiesRes.ok,
+      events: eventsRes.ok,
+    },
     profilePatch,
     biometrics,
     completedSessions,

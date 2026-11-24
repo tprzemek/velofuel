@@ -10,84 +10,52 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import {
-  DEFAULT_PROFILE,
-  DEFAULT_STAPLES,
-  DEFAULT_SUPPLEMENTS,
-  createDefaultBiometrics,
-  createDefaultLogs,
-  createDefaultSessions,
   getIsoDate,
+  isSampleBiometric,
+  isSampleSession,
   migrateStaple,
+  stripDemoData,
 } from './engine/defaultData';
 import { computeBiometricsSummary, computeWeeklyCheckIn } from './engine/biometricsEngine';
-import { computeDailyPlan, DEFAULT_MEAL_SLOTS, scaleStapleToTargets } from './engine/fuelingEngine';
+import {
+  computeDailyPlan,
+  getDefaultMealSlotsForProfile,
+  scaleStapleToTargets,
+} from './engine/fuelingEngine';
 import { syncIntervalsDirect } from './engine/intervalsClient';
 import { exchangeWithingsCode, fetchWithingsMeasurements } from './engine/withingsClient';
 import { formatFoodAmount, getUnits } from './engine/units';
+import {
+  SCHEMA_VERSION,
+  bootstrapStorage,
+  clearCloudConfig,
+  computeHasUserData,
+  createCleanUserEnvelope,
+  createDemoEnvelope,
+  createSingleFlightQueue,
+  loadCloudConfig,
+  mergeRemoteEnvelopeWithLocalSecrets,
+  normalizeAppState,
+  pullCloudGist,
+  reconcileCloudSync,
+  saveCloudConfig,
+  writeIndexedDbMirror,
+  writeLocalEnvelope,
+} from './engine/storageEngine';
 import TodayView from './components/TodayView';
 import StaplesView from './components/StaplesView';
 import TrainingView from './components/TrainingView';
 import BodyView from './components/BodyView';
 import SyncView from './components/SyncView';
+import OnboardingFlow from './components/OnboardingFlow';
 import StapleScalerModal from './components/StapleScalerModal';
 import WorkMealModal from './components/WorkMealModal';
 import QuickFoodModal from './components/QuickFoodModal';
 import SupplementsModal from './components/SupplementsModal';
 
-const STORAGE_KEY = 'velofuel_state_v1';
 const AUTO_SYNC_INTERVAL_MS = 2 * 60 * 1000;
-
-function loadInitialState() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      const migratedStaples =
-        Array.isArray(parsed.staples) && parsed.staples.length
-          ? parsed.staples.map(migrateStaple).filter(Boolean)
-          : DEFAULT_STAPLES;
-      return {
-        profile: {
-          ...DEFAULT_PROFILE,
-          ...(parsed.profile || {}),
-          units: getUnits(parsed.profile),
-        },
-        staples: migratedStaples.length ? migratedStaples : DEFAULT_STAPLES,
-        supplements: Array.isArray(parsed.supplements) ? parsed.supplements : DEFAULT_SUPPLEMENTS,
-        sessions: Array.isArray(parsed.sessions) && parsed.sessions.length ? parsed.sessions : createDefaultSessions(),
-        biometrics: Array.isArray(parsed.biometrics) && parsed.biometrics.length ? parsed.biometrics : createDefaultBiometrics(),
-        logsByDate: parsed.logsByDate || createDefaultLogs(),
-        customMealsByDate: parsed.customMealsByDate || {},
-        timelineOrderByDate: parsed.timelineOrderByDate || {},
-        intervalsConfig: { athleteId: '0', apiKey: '', autoSync: true, ...(parsed.intervalsConfig || {}) },
-        withingsConfig: {
-          clientId: '',
-          clientSecret: '',
-          accessToken: '',
-          refreshToken: '',
-          expiresAt: 0,
-          ...(parsed.withingsConfig || {}),
-        },
-        aiConfig: { provider: 'auto', apiKey: '', ...(parsed.aiConfig || {}) },
-      };
-    }
-  } catch {
-    // ignore corrupted storage
-  }
-  return {
-    profile: DEFAULT_PROFILE,
-    staples: DEFAULT_STAPLES,
-    supplements: DEFAULT_SUPPLEMENTS,
-    sessions: createDefaultSessions(),
-    biometrics: createDefaultBiometrics(),
-    logsByDate: createDefaultLogs(),
-    customMealsByDate: {},
-    timelineOrderByDate: {},
-    intervalsConfig: { athleteId: '0', apiKey: '', autoSync: true },
-    withingsConfig: { clientId: '', clientSecret: '', accessToken: '', refreshToken: '', expiresAt: 0 },
-    aiConfig: { provider: 'auto', apiKey: '' },
-  };
-}
+const CLOUD_PUSH_DEBOUNCE_MS = 2500;
+const CLOUD_PULL_MIN_INTERVAL_MS = 30 * 1000;
 
 function shiftIsoDate(iso, deltaDays) {
   const [y, m, d] = iso.split('-').map(Number);
@@ -109,12 +77,43 @@ function formatTopDate(iso) {
 }
 
 export default function App() {
-  const [state, setState] = useState(loadInitialState);
+  const [state, setStateRaw] = useState(() => createDemoEnvelope());
+  const [hydrationDone, setHydrationDone] = useState(false);
+  const [showWelcome, setShowWelcome] = useState(false);
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [persistentGranted, setPersistentGranted] = useState(false);
+  const [storageWarning, setStorageWarning] = useState('');
+
+  const [cloudConfig, setCloudConfig] = useState(() => loadCloudConfig());
+  const [cloudStatus, setCloudStatus] = useState(() => {
+    const cfg = loadCloudConfig();
+    return cfg.githubToken && cfg.gistId && cfg.lastSyncedAt ? 'synced' : 'local';
+  });
+  const [cloudError, setCloudError] = useState('');
+
   const [activeTab, setActiveTab] = useState('today');
+  const [todayIso, setTodayIso] = useState(() => getIsoDate(0));
   const [selectedDate, setSelectedDate] = useState(() => getIsoDate(0));
   const [toast, setToast] = useState('');
   const [bgSyncing, setBgSyncing] = useState(false);
+
+  const persistenceReadyRef = useRef(false);
+  const skipNextSaveRef = useRef(false);
+  const stateRef = useRef(state);
+  const cloudConfigRef = useRef(cloudConfig);
+  const cloudPushQueueRef = useRef(null);
+  if (!cloudPushQueueRef.current) {
+    cloudPushQueueRef.current = createSingleFlightQueue();
+  }
+  const cloudPushTimerRef = useRef(null);
   const lastSyncRef = useRef(0);
+  const lastCloudPullRef = useRef(0);
+  const lastKnownTodayRef = useRef(getIsoDate(0));
+  const showWelcomeRef = useRef(showWelcome);
+
+  stateRef.current = state;
+  cloudConfigRef.current = cloudConfig;
+  showWelcomeRef.current = showWelcome;
 
   // Modals
   const [stapleModal, setStapleModal] = useState({ open: false, slotInfo: null, remaining: null });
@@ -122,19 +121,117 @@ export default function App() {
   const [workModal, setWorkModal] = useState({ open: false, slotInfo: null });
   const [supplementsModalOpen, setSupplementsModalOpen] = useState(false);
 
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    } catch {
-      // ignore quota errors
-    }
-  }, [state]);
-
   const showToast = useCallback((msg) => {
     setToast(msg);
     window.clearTimeout(window.__vfToastTimer);
     window.__vfToastTimer = window.setTimeout(() => setToast(''), 3400);
   }, []);
+
+  // Stamp schemaVersion, updatedAt, revision, and hasUserData on every local user mutation
+  const setState = useCallback((updater) => {
+    setStateRaw((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      if (!next || next === prev) return prev;
+      const stamped = {
+        ...next,
+        schemaVersion: SCHEMA_VERSION,
+        updatedAt: new Date().toISOString(),
+        revision: (Number(prev?.revision) || 0) + 1,
+      };
+      stamped.hasUserData = Boolean(stamped.hasUserData) || computeHasUserData(stamped);
+      return stamped;
+    });
+  }, []);
+
+  // Persist a concrete envelope immediately to Tier 1 + Tier 2 without extra revision bump
+  const persistEnvelopeNow = useCallback(async (envelope) => {
+    const lsRes = writeLocalEnvelope(envelope);
+    if (!lsRes.ok) {
+      setStorageWarning(lsRes.error || 'Could not save to browser localStorage.');
+    } else {
+      setStorageWarning('');
+    }
+    const idbRes = await writeIndexedDbMirror(envelope, getIsoDate(0));
+    if (!idbRes.ok) {
+      setStorageWarning(
+        lsRes.ok
+          ? idbRes.error || 'Could not mirror data to durable device storage.'
+          : idbRes.error || lsRes.error || 'Unable to persist data on this device.'
+      );
+    }
+  }, []);
+
+  // React 19 <StrictMode>-safe async boot hydration gate:
+  // NO write to Tier 1/2/3 runs until bootstrapStorage() completes and user exits Welcome.
+  useEffect(() => {
+    let cancelled = false;
+    persistenceReadyRef.current = false;
+
+    bootstrapStorage()
+      .then((res) => {
+        if (cancelled) return;
+        setPersistentGranted(Boolean(res.persistentGranted));
+        if (res.tier1Warning) {
+          setStorageWarning(res.tier1Warning);
+        }
+
+        if (res.source === 'fresh' || !res.envelope) {
+          showWelcomeRef.current = true;
+          setShowWelcome(true);
+          persistenceReadyRef.current = true;
+          setHydrationDone(true);
+          return;
+        }
+
+        skipNextSaveRef.current = true;
+        stateRef.current = res.envelope;
+        showWelcomeRef.current = false;
+        setStateRaw(res.envelope);
+        setShowWelcome(false);
+        persistenceReadyRef.current = true;
+        setHydrationDone(true);
+
+        if (res.recoveredFrom === 'indexeddb') {
+          showToast('Restored your saved data from durable device storage.');
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        showWelcomeRef.current = true;
+        setShowWelcome(true);
+        persistenceReadyRef.current = true;
+        setHydrationDone(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [showToast]);
+
+  // Tier 1 + Tier 2 durable mirror on every state change (strictly gated!)
+  useEffect(() => {
+    if (!hydrationDone || !persistenceReadyRef.current || showWelcome) return;
+    if (skipNextSaveRef.current) {
+      skipNextSaveRef.current = false;
+      return;
+    }
+
+    const lsRes = writeLocalEnvelope(state);
+    if (!lsRes.ok) {
+      setStorageWarning(lsRes.error || 'Could not save to browser quick-storage.');
+    } else {
+      setStorageWarning('');
+    }
+    writeIndexedDbMirror(state, getIsoDate(0))
+      .then((idbRes) => {
+        if (idbRes && !idbRes.ok) {
+          setStorageWarning(
+            (prev) => prev || idbRes.error || 'Could not mirror data to durable device storage.'
+          );
+        }
+      })
+      .catch(() => {});
+  }, [state, hydrationDone, showWelcome]);
 
   const units = useMemo(() => getUnits(state.profile), [state.profile]);
 
@@ -248,26 +345,32 @@ export default function App() {
     [state.biometrics, state.profile, state.logsByDate, state.sessions]
   );
 
-  const handleImportBiometrics = useCallback((entries) => {
-    setState((prev) => {
-      const map = new Map(prev.biometrics.map((b) => [b.date, b]));
-      entries.forEach((e) => {
-        const cur = map.get(e.date) || {};
-        map.set(e.date, {
-          ...cur,
-          ...e,
-          weightKg: e.weightKg ?? cur.weightKg ?? null,
-          bodyFatPct: e.bodyFatPct ?? cur.bodyFatPct ?? null,
-          muscleMassKg: e.muscleMassKg ?? cur.muscleMassKg ?? null,
-          hydrationKg: e.hydrationKg ?? cur.hydrationKg ?? null,
-          boneMassKg: e.boneMassKg ?? cur.boneMassKg ?? null,
-          restingHr: e.restingHr ?? cur.restingHr ?? null,
-          hrv: e.hrv ?? cur.hrv ?? null,
+  const handleImportBiometrics = useCallback(
+    (entries) => {
+      if (!Array.isArray(entries) || entries.length === 0) return;
+      setState((prev) => {
+        // Strip fake sample scale rows as soon as real biometric entries arrive
+        const baseReal = prev.biometrics.filter((b) => b && !isSampleBiometric(b));
+        const map = new Map(baseReal.map((b) => [b.date, b]));
+        entries.forEach((e) => {
+          const cur = map.get(e.date) || {};
+          map.set(e.date, {
+            ...cur,
+            ...e,
+            weightKg: e.weightKg ?? cur.weightKg ?? null,
+            bodyFatPct: e.bodyFatPct ?? cur.bodyFatPct ?? null,
+            muscleMassKg: e.muscleMassKg ?? cur.muscleMassKg ?? null,
+            hydrationKg: e.hydrationKg ?? cur.hydrationKg ?? null,
+            boneMassKg: e.boneMassKg ?? cur.boneMassKg ?? null,
+            restingHr: e.restingHr ?? cur.restingHr ?? null,
+            hrv: e.hrv ?? cur.hrv ?? null,
+          });
         });
+        return { ...prev, biometrics: Array.from(map.values()).sort((a, b) => a.date.localeCompare(b.date)) };
       });
-      return { ...prev, biometrics: Array.from(map.values()).sort((a, b) => a.date.localeCompare(b.date)) };
-    });
-  }, []);
+    },
+    [setState]
+  );
 
   const handleApplyIntervalsSync = useCallback(
     (syncData) => {
@@ -275,19 +378,31 @@ export default function App() {
         handleImportBiometrics(syncData.biometrics);
       }
       setState((prev) => {
-        // Index previous sessions by id so we preserve per-workout user tweaks
+        const activitiesOk = syncData.endpointsOk?.activities !== false;
+        const eventsOk = syncData.endpointsOk?.events !== false;
         const prevById = new Map(prev.sessions.map((s) => [s.id, s]));
-        const incomingIcu = [
-          ...(syncData.completedSessions || []),
-          ...(syncData.plannedSessions || []),
-        ];
+        const incomingCompleted = activitiesOk ? syncData.completedSessions || [] : [];
+        const incomingPlanned = eventsOk ? syncData.plannedSessions || [] : [];
+        const incomingIcu = [...incomingCompleted, ...incomingPlanned];
         const syncedDates = new Set(incomingIcu.map((s) => s.date));
 
-        // Keep user-created manual sessions (and sample sessions on dates outside Intervals.icu data);
-        // drop stale icu-* sessions (so paired/deleted Intervals events don't duplicate) and replace demo placeholders on synced dates
-        const retainedManual = prev.sessions.filter((s) => {
-          if (s.source === 'intervals.icu' || String(s.id || '').startsWith('icu-')) return false;
-          if (syncedDates.has(s.date) && /^sess-(m\d|p\d|0)$/.test(String(s.id || ''))) return false;
+        // Preserve previously synced icu-act-* / icu-evt-* if that specific endpoint returned a transient error;
+        // drop all demo sample sessions for real users, or on synced dates when previewing in Demo Mode.
+        const retained = prev.sessions.filter((s) => {
+          const id = String(s?.id || '');
+          const isIcu = s?.source === 'intervals.icu' || id.startsWith('icu-');
+          if (isIcu) {
+            if (id.startsWith('icu-act-') || s.status === 'completed') {
+              return !activitiesOk;
+            }
+            if (id.startsWith('icu-evt-') || s.status === 'planned') {
+              return !eventsOk;
+            }
+            return !(activitiesOk && eventsOk);
+          }
+          if (isSampleSession(s) && (!prev.isDemoMode || syncedDates.has(s.date))) {
+            return false;
+          }
           return true;
         });
 
@@ -306,8 +421,7 @@ export default function App() {
         });
 
         const nextLogsByDate = { ...prev.logsByDate };
-        (syncData.completedSessions || []).forEach((s) => {
-          // If a completed ride from Intervals.icu recorded actual carbs_ingested and user hasn't logged fuel yet, auto-log it
+        incomingCompleted.forEach((s) => {
           if (s.carbsIngested > 0) {
             const dayLogs = nextLogsByDate[s.date] || [];
             const logId = `log-bike-icu-${s.id}`;
@@ -340,19 +454,197 @@ export default function App() {
         return {
           ...prev,
           profile: nextProfile,
-          sessions: [...retainedManual, ...mergedIcu],
+          sessions: [...retained, ...mergedIcu],
           logsByDate: nextLogsByDate,
         };
       });
     },
-    [handleImportBiometrics]
+    [handleImportBiometrics, setState]
   );
+
+  // Tier 3 Private GitHub Gist serialized reconciliation (push or pull, strict Never-Clobber guard)
+  const runCloudReconcile = useCallback(
+    async ({
+      manual = false,
+      useEtag = false,
+      forcePushIfLocalHasData = false,
+      allowCreate = false,
+    } = {}) => {
+      const cfg = cloudConfigRef.current;
+      if (!cfg?.githubToken?.trim()) {
+        if (manual) {
+          setCloudError('Paste your GitHub Personal Access Token first.');
+        }
+        setCloudStatus('local');
+        return null;
+      }
+      if (!hydrationDone || !persistenceReadyRef.current || showWelcomeRef.current) {
+        return null;
+      }
+
+      return cloudPushQueueRef.current(async () => {
+        const latestCfg = cloudConfigRef.current;
+        const latestState = stateRef.current;
+        if (!latestCfg?.githubToken?.trim()) return null;
+
+        setCloudStatus('syncing');
+        setCloudError('');
+        try {
+          const res = await reconcileCloudSync({
+            localEnvelope: latestState,
+            cloudConfig: latestCfg,
+            allowCreate,
+            preferRemoteOnEmpty: true,
+            forcePushIfLocalHasData,
+            useEtag,
+          });
+
+          if (res.action === 'rate_limited') {
+            setCloudStatus('error');
+            setCloudError('GitHub rate limit active — sync will resume automatically shortly.');
+            return res;
+          }
+
+          if (res.action === 'pulled' && res.remoteEnvelope) {
+            skipNextSaveRef.current = true;
+            stateRef.current = res.remoteEnvelope;
+            setStateRaw(res.remoteEnvelope);
+            await persistEnvelopeNow(res.remoteEnvelope);
+            const nextCfg = saveCloudConfig({
+              gistId: res.gistId || latestCfg.gistId,
+              etag: res.etag || latestCfg.etag,
+              lastSyncedAt: res.updatedAt || new Date().toISOString(),
+              lastSyncedRevision: Number(res.remoteEnvelope.revision) || 1,
+              lastError: '',
+              rateLimitResetAt: 0,
+            });
+            cloudConfigRef.current = nextCfg;
+            setCloudConfig(nextCfg);
+            setCloudStatus('synced');
+            if (manual) {
+              showToast('Synced newer data from your private GitHub backup.');
+            }
+            return res;
+          }
+
+          if (res.action === 'pushed') {
+            const nextCfg = saveCloudConfig({
+              gistId: res.gistId || latestCfg.gistId,
+              etag: res.etag || '',
+              lastSyncedAt: res.updatedAt || new Date().toISOString(),
+              lastSyncedRevision: Number(res.revision) || Number(latestState.revision) || 1,
+              lastError: '',
+              rateLimitResetAt: 0,
+            });
+            cloudConfigRef.current = nextCfg;
+            setCloudConfig(nextCfg);
+            setCloudStatus('synced');
+            if (manual) {
+              showToast('Backed up to your private GitHub Cloud Gist!');
+            }
+            return res;
+          }
+
+          const isDemoOrEmptyNoop = res.reason === 'demo_mode' || res.reason === 'empty_local';
+          const effectiveGistId = isDemoOrEmptyNoop ? '' : res.gistId || latestCfg.gistId || '';
+          if (effectiveGistId && (res.gistId !== latestCfg.gistId || !latestCfg.lastSyncedAt)) {
+            const nextCfg = saveCloudConfig({
+              gistId: effectiveGistId,
+              etag: res.etag || latestCfg.etag,
+              lastSyncedAt: latestCfg.lastSyncedAt || new Date().toISOString(),
+              lastSyncedRevision:
+                latestCfg.lastSyncedRevision || Number(latestState.revision) || 1,
+              lastError: '',
+            });
+            cloudConfigRef.current = nextCfg;
+            setCloudConfig(nextCfg);
+          }
+
+          if (effectiveGistId) {
+            setCloudStatus('synced');
+            if (manual) {
+              showToast('Cloud backup is already up to date.');
+            }
+          } else {
+            setCloudStatus('local');
+            if (manual) {
+              showToast(
+                res.reason === 'demo_mode' || latestState?.isDemoMode
+                  ? "Demo Mode data isn't uploaded to cloud — run Setup Wizard to back up your real profile."
+                  : 'No real profile data to back up yet — finish Setup Wizard first.'
+              );
+            }
+          }
+          return res;
+        } catch (err) {
+          const msg = err?.message || 'Cloud sync failed.';
+          const nextCfg = saveCloudConfig({
+            lastError: msg,
+            ...(err?.rateLimitResetAt ? { rateLimitResetAt: err.rateLimitResetAt } : {}),
+          });
+          cloudConfigRef.current = nextCfg;
+          setCloudConfig(nextCfg);
+          setCloudError(msg);
+          setCloudStatus('error');
+          if (manual) {
+            showToast(`Cloud sync error: ${msg}`);
+          }
+          return null;
+        }
+      });
+    },
+    [hydrationDone, persistEnvelopeNow, showToast]
+  );
+
+  // Debounced (~2.5s) automatic Tier 3 cloud push after local user changes (ONLY after an actually completed sync!)
+  useEffect(() => {
+    if (!hydrationDone || !persistenceReadyRef.current || showWelcome) return;
+    const hasEstablishedCloud = Boolean(
+      cloudConfig?.githubToken?.trim() && cloudConfig?.lastSyncedAt
+    );
+    if (!hasEstablishedCloud || cloudConfig.autoSync === false) return;
+    if (!state.hasUserData || state.isDemoMode) return;
+    if (Number(state.revision) <= Number(cloudConfig.lastSyncedRevision || 0)) return;
+
+    window.clearTimeout(cloudPushTimerRef.current);
+    cloudPushTimerRef.current = window.setTimeout(() => {
+      runCloudReconcile({ manual: false, useEtag: false, allowCreate: false });
+    }, CLOUD_PUSH_DEBOUNCE_MS);
+
+    return () => {
+      window.clearTimeout(cloudPushTimerRef.current);
+    };
+  }, [
+    state.revision,
+    state.hasUserData,
+    state.isDemoMode,
+    hydrationDone,
+    showWelcome,
+    cloudConfig?.githubToken,
+    cloudConfig?.lastSyncedAt,
+    cloudConfig?.autoSync,
+    cloudConfig?.lastSyncedRevision,
+    runCloudReconcile,
+  ]);
+
+  // Pull from Tier 3 Cloud Gist once after boot hydration if an established cloud link exists
+  useEffect(() => {
+    if (!hydrationDone || showWelcome) return;
+    const cfg = cloudConfigRef.current;
+    if (!cfg?.githubToken?.trim() || !cfg?.lastSyncedAt) return;
+    const now = Date.now();
+    if (now - lastCloudPullRef.current < CLOUD_PULL_MIN_INTERVAL_MS) return;
+    lastCloudPullRef.current = now;
+    runCloudReconcile({ manual: false, useEtag: true, allowCreate: false });
+  }, [hydrationDone, showWelcome, runCloudReconcile]);
 
   const runBackgroundSync = useCallback(
     async (force = false) => {
+      if (!hydrationDone || showWelcomeRef.current) return;
       const now = Date.now();
       if (!force && now - lastSyncRef.current < AUTO_SYNC_INTERVAL_MS) return;
-      const canIntervals = Boolean(state.intervalsConfig.apiKey?.trim()) && (force || state.intervalsConfig.autoSync !== false);
+      const canIntervals =
+        Boolean(state.intervalsConfig.apiKey?.trim()) && (force || state.intervalsConfig.autoSync !== false);
       const canWithings = Boolean(state.withingsConfig.accessToken || state.withingsConfig.refreshToken);
       if (!canIntervals && !canWithings) return;
 
@@ -388,7 +680,11 @@ export default function App() {
                 if (res.updatedTokens) {
                   setState((prev) => ({
                     ...prev,
-                    withingsConfig: { ...prev.withingsConfig, ...res.updatedTokens, lastSyncedAt: new Date().toISOString() },
+                    withingsConfig: {
+                      ...prev.withingsConfig,
+                      ...res.updatedTokens,
+                      lastSyncedAt: new Date().toISOString(),
+                    },
                   }));
                 }
                 if (res.biometrics?.length) {
@@ -403,15 +699,24 @@ export default function App() {
         setBgSyncing(false);
       }
     },
-    [state.intervalsConfig, state.withingsConfig, handleApplyIntervalsSync, handleImportBiometrics, showToast]
+    [
+      hydrationDone,
+      state.intervalsConfig,
+      state.withingsConfig,
+      handleApplyIntervalsSync,
+      handleImportBiometrics,
+      setState,
+      showToast,
+    ]
   );
 
-  // Handle Withings OAuth redirect (?code=...) once on mount
+  // Handle Withings OAuth redirect (?code=...) once after hydration finishes
   useEffect(() => {
+    if (!hydrationDone) return;
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code');
     if (!code) return;
-    const { clientId, clientSecret } = state.withingsConfig || {};
+    const { clientId, clientSecret } = stateRef.current.withingsConfig || {};
     if (!clientId || !clientSecret) return;
 
     const redirectUri = `${window.location.origin}${window.location.pathname}`;
@@ -421,7 +726,11 @@ export default function App() {
       try {
         setBgSyncing(true);
         const tokens = await exchangeWithingsCode({ clientId, clientSecret, code, redirectUri });
-        const nextCfg = { ...state.withingsConfig, ...tokens, lastSyncedAt: new Date().toISOString() };
+        const nextCfg = {
+          ...stateRef.current.withingsConfig,
+          ...tokens,
+          lastSyncedAt: new Date().toISOString(),
+        };
         setState((prev) => ({ ...prev, withingsConfig: nextCfg }));
         const res = await fetchWithingsMeasurements(nextCfg, 30);
         if (res.biometrics?.length) {
@@ -435,19 +744,48 @@ export default function App() {
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [hydrationDone]);
 
-  // Auto-sync Intervals.icu & Withings on open and when returning to app tab
+  // Overnight midnight rollover + Intervals/Withings sync + Cloud Gist pull on visibilitychange & online
   useEffect(() => {
+    if (!hydrationDone) return;
     runBackgroundSync(false);
+
+    const handleResume = () => {
+      const currentToday = getIsoDate(0);
+      if (currentToday !== lastKnownTodayRef.current) {
+        const previousToday = lastKnownTodayRef.current;
+        lastKnownTodayRef.current = currentToday;
+        setTodayIso(currentToday);
+        setSelectedDate((prev) => (prev === previousToday ? currentToday : prev));
+      }
+      runBackgroundSync(false);
+      const cfg = cloudConfigRef.current;
+      if (
+        !showWelcomeRef.current &&
+        cfg?.githubToken?.trim() &&
+        cfg?.lastSyncedAt
+      ) {
+        const now = Date.now();
+        if (now - lastCloudPullRef.current >= CLOUD_PULL_MIN_INTERVAL_MS) {
+          lastCloudPullRef.current = now;
+          runCloudReconcile({ manual: false, useEtag: true, allowCreate: false });
+        }
+      }
+    };
+
     const onVisible = () => {
       if (document.visibilityState === 'visible') {
-        runBackgroundSync(false);
+        handleResume();
       }
     };
     document.addEventListener('visibilitychange', onVisible);
-    return () => document.removeEventListener('visibilitychange', onVisible);
-  }, [runBackgroundSync]);
+    window.addEventListener('online', handleResume);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('online', handleResume);
+    };
+  }, [hydrationDone, runBackgroundSync, runCloudReconcile]);
 
   const handleLogEntry = (entry) => {
     setState((prev) => ({
@@ -822,7 +1160,7 @@ export default function App() {
   };
 
   const handleDeleteMealSlot = (date, slotId, slotLabel) => {
-    const currentMeals = state.customMealsByDate?.[date] || DEFAULT_MEAL_SLOTS;
+    const currentMeals = state.customMealsByDate?.[date] || getDefaultMealSlotsForProfile(state.profile);
     if (currentMeals.length <= 1) {
       showToast('Keep at least one meal slot for the day.');
       return;
@@ -864,7 +1202,7 @@ export default function App() {
       size: size === 'meal' ? 'meal' : 'snack',
       location: 'Custom',
     };
-    const currentMeals = state.customMealsByDate?.[date] || DEFAULT_MEAL_SLOTS;
+    const currentMeals = state.customMealsByDate?.[date] || getDefaultMealSlotsForProfile(state.profile);
     const nextMeals = [...currentMeals, newMeal];
     const currentOrder = dailyPlan.meals.map((m) => m.slot);
     const clampedIdx = Math.min(Math.max(0, Number(insertIndex ?? currentOrder.length)), currentOrder.length);
@@ -897,7 +1235,7 @@ export default function App() {
         timelineOrderByDate: nextOrders,
       };
     });
-    showToast('Restored default Breakfast, Lunch, Snack & Dinner for this day.');
+    showToast('Restored your default daily meal layout for this day.');
   };
 
   const handleCompleteRide = (date, actualKj, durationMin, sessionId = null, actualKcal = 0) => {
@@ -1107,11 +1445,241 @@ export default function App() {
 
   const handleAddBiometric = (entry) => {
     setState((prev) => {
-      const map = new Map(prev.biometrics.map((b) => [b.date, b]));
+      const baseReal = prev.biometrics.filter((b) => b && !isSampleBiometric(b));
+      const map = new Map(baseReal.map((b) => [b.date, b]));
       map.set(entry.date, { ...(map.get(entry.date) || {}), ...entry });
       return { ...prev, biometrics: Array.from(map.values()).sort((a, b) => a.date.localeCompare(b.date)) };
     });
   };
+
+  // VeloFuel v12: Welcome, Onboarding, Cloud Sync & Snapshot Recovery Handlers
+  const handleEnterDemoMode = useCallback(async () => {
+    const demo = createDemoEnvelope();
+    skipNextSaveRef.current = true;
+    stateRef.current = demo;
+    showWelcomeRef.current = false;
+    setStateRaw(demo);
+    setShowWelcome(false);
+    setWizardOpen(false);
+    setActiveTab('today');
+    await persistEnvelopeNow(demo);
+  }, [persistEnvelopeNow]);
+
+  const handleCompleteOnboarding = useCallback(
+    async (wizardData) => {
+      const isFreshRealSetup =
+        !wizardOpen || Boolean(stateRef.current?.isDemoMode) || !stateRef.current?.hasUserData;
+      const prevClean = wizardOpen ? stripDemoData(stateRef.current) : null;
+
+      // Merge any preserved real manual (and existing Intervals.icu) sessions from re-running wizard
+      // Only drop prior intervals.icu sessions when Step 3 pulled fresh data or cleared the API key!
+      const incomingSessions = Array.isArray(wizardData.sessions) ? wizardData.sessions : [];
+      const incomingIds = new Set(incomingSessions.map((s) => s.id));
+      const replaceIcu =
+        Boolean(wizardData.intervalsSyncData) || !wizardData.intervalsConfig?.apiKey?.trim();
+      const preservedSessions = prevClean
+        ? (prevClean.sessions || []).filter(
+            (s) =>
+              !isSampleSession(s) &&
+              !incomingIds.has(s.id) &&
+              (!replaceIcu || s.source !== 'intervals.icu')
+          )
+        : [];
+      const finalSessions = [...preservedSessions, ...incomingSessions];
+
+      // Real biometrics only (ZERO withings-sample!)
+      const finalBiometrics = (wizardData.biometrics || []).filter((b) => b && !isSampleBiometric(b));
+
+      const nextEnvelope = createCleanUserEnvelope({
+        profile: wizardData.profile,
+        staples: prevClean?.staples?.length ? prevClean.staples : undefined,
+        supplements: wizardData.supplements,
+        sessions: finalSessions,
+        biometrics: finalBiometrics,
+        logsByDate: prevClean?.logsByDate || {},
+        customMealsByDate: {},
+        timelineOrderByDate: {},
+        intervalsConfig: wizardData.intervalsConfig,
+        withingsConfig: prevClean?.withingsConfig,
+        aiConfig: prevClean?.aiConfig,
+        revision: isFreshRealSetup ? 1 : Math.max(1, Number(stateRef.current?.revision || 0) + 1),
+      });
+
+      skipNextSaveRef.current = true;
+      stateRef.current = nextEnvelope;
+      showWelcomeRef.current = false;
+      setStateRaw(nextEnvelope);
+      setShowWelcome(false);
+      setWizardOpen(false);
+      setActiveTab('today');
+      setSelectedDate(getIsoDate(0));
+      await persistEnvelopeNow(nextEnvelope);
+
+      if (wizardData.cloudConnection?.githubToken) {
+        const existingCloudCfg = loadCloudConfig();
+        const savedCfg = saveCloudConfig({
+          githubToken: wizardData.cloudConnection.githubToken,
+          gistId: wizardData.cloudConnection.gistId || existingCloudCfg.gistId || '',
+          etag: wizardData.cloudConnection.etag || existingCloudCfg.etag || '',
+          lastSyncedAt:
+            wizardData.cloudConnection.lastSyncedAt || existingCloudCfg.lastSyncedAt || '',
+          syncThirdPartyKeys: Boolean(wizardData.cloudConnection.syncThirdPartyKeys),
+          autoSync: true,
+        });
+        cloudConfigRef.current = savedCfg;
+        setCloudConfig(savedCfg);
+        setCloudStatus(savedCfg.githubToken?.trim() && savedCfg.lastSyncedAt ? 'synced' : 'local');
+        lastCloudPullRef.current = Date.now();
+        // Push the finalized launched envelope to cloud cleanly (never force-push on fresh-device or demo setup)
+        runCloudReconcile({
+          manual: false,
+          useEtag: false,
+          forcePushIfLocalHasData: !isFreshRealSetup,
+          allowCreate: !isFreshRealSetup,
+        });
+      } else {
+        const curCfg = cloudConfigRef.current;
+        setCloudStatus(curCfg?.githubToken?.trim() && curCfg?.lastSyncedAt ? 'synced' : 'local');
+      }
+
+      showToast(
+        wizardData.profile?.name && wizardData.profile.name !== 'Rider'
+          ? `Welcome to VeloFuel, ${wizardData.profile.name}! Your real profile is live.`
+          : 'Your VeloFuel profile is live — all sample data cleared!'
+      );
+    },
+    [wizardOpen, persistEnvelopeNow, runCloudReconcile, showToast]
+  );
+
+  const handleRestoreFromCloud = useCallback(
+    async ({ envelope, gistId, etag }) => {
+      const merged = mergeRemoteEnvelopeWithLocalSecrets(envelope, stateRef.current);
+      const normalized = normalizeAppState(merged, { preserveEmptyCollections: true });
+      if (!normalized) return;
+
+      skipNextSaveRef.current = true;
+      stateRef.current = normalized;
+      showWelcomeRef.current = false;
+      lastCloudPullRef.current = Date.now();
+      setStateRaw(normalized);
+      setShowWelcome(false);
+      setWizardOpen(false);
+      setActiveTab('today');
+      await persistEnvelopeNow(normalized);
+
+      const updatedCfg = saveCloudConfig({
+        gistId: gistId || loadCloudConfig().gistId || '',
+        etag: etag || '',
+        lastSyncedAt: new Date().toISOString(),
+        lastSyncedRevision: Number(normalized.revision) || 1,
+        lastError: '',
+      });
+      cloudConfigRef.current = updatedCfg;
+      setCloudConfig(updatedCfg);
+      setCloudStatus('synced');
+      setCloudError('');
+      showToast('Restored your VeloFuel data from your private GitHub Cloud Backup!');
+    },
+    [persistEnvelopeNow, showToast]
+  );
+
+  const handleUpdateCloudConfig = useCallback((patch) => {
+    const prevCfg = cloudConfigRef.current || {};
+    const gistChanged =
+      patch.gistId !== undefined &&
+      String(patch.gistId).trim() !== String(prevCfg.gistId || '').trim();
+    const tokenChanged =
+      patch.githubToken !== undefined &&
+      String(patch.githubToken).trim() !== String(prevCfg.githubToken || '').trim();
+    const shouldPauseAutoSync = gistChanged || tokenChanged;
+    if (shouldPauseAutoSync) {
+      window.clearTimeout(cloudPushTimerRef.current);
+    }
+    const effectivePatch = shouldPauseAutoSync
+      ? { ...patch, lastSyncedAt: '', etag: '', lastSyncedRevision: 0 }
+      : patch;
+    const next = saveCloudConfig(effectivePatch);
+    cloudConfigRef.current = next;
+    setCloudConfig(next);
+    if (shouldPauseAutoSync || !next.githubToken?.trim() || !next.lastSyncedAt) {
+      setCloudStatus('local');
+    }
+    setCloudError('');
+  }, []);
+
+  const handleManualCloudSync = useCallback(async () => {
+    const cfg = cloudConfigRef.current;
+    if (!cfg?.githubToken?.trim()) {
+      setCloudError('Paste your GitHub Personal Access Token first.');
+      setCloudStatus('error');
+      return;
+    }
+    await runCloudReconcile({
+      manual: true,
+      useEtag: false,
+      forcePushIfLocalHasData: true,
+      allowCreate: true,
+    });
+  }, [runCloudReconcile]);
+
+  const handleManualCloudRestore = useCallback(async () => {
+    const cfg = cloudConfigRef.current;
+    if (!cfg?.githubToken?.trim()) {
+      setCloudError('Paste your GitHub Personal Access Token first.');
+      setCloudStatus('error');
+      return;
+    }
+    setCloudStatus('syncing');
+    setCloudError('');
+    try {
+      const res = await pullCloudGist(cfg.githubToken.trim(), cfg.gistId || '');
+      if (res.status !== 'ok' || !res.envelope) {
+        setCloudStatus('error');
+        setCloudError('No private VeloFuel backup gist was found on that GitHub account.');
+        return;
+      }
+      await handleRestoreFromCloud({
+        envelope: res.envelope,
+        gistId: res.gistId,
+        etag: res.etag,
+      });
+    } catch (err) {
+      const msg = err?.message || 'Could not restore from cloud.';
+      setCloudError(msg);
+      setCloudStatus('error');
+      showToast(`Cloud restore error: ${msg}`);
+    }
+  }, [handleRestoreFromCloud, showToast]);
+
+  const handleDisconnectCloud = useCallback(() => {
+    const cleared = clearCloudConfig();
+    cloudConfigRef.current = cleared;
+    setCloudConfig(cleared);
+    setCloudStatus('local');
+    setCloudError('');
+    showToast('Disconnected GitHub Cloud Sync. On-device storage remains active.');
+  }, [showToast]);
+
+  const handleRestoreSnapshot = useCallback(
+    async (snap) => {
+      if (!snap?.payload) return;
+      const restored = normalizeAppState(
+        {
+          ...snap.payload,
+          revision: Math.max(Number(stateRef.current?.revision || 0), Number(snap.payload.revision || 0)) + 1,
+          updatedAt: new Date().toISOString(),
+        },
+        { preserveEmptyCollections: true }
+      );
+      if (!restored) return;
+      skipNextSaveRef.current = true;
+      stateRef.current = restored;
+      setStateRaw(restored);
+      await persistEnvelopeNow(restored);
+      showToast(`Restored local snapshot from ${snap.date}!`);
+    },
+    [persistEnvelopeNow, showToast]
+  );
 
   const handleExportBackup = () => {
     const safeCopy = {
@@ -1121,6 +1689,7 @@ export default function App() {
       withingsConfig: { clientId: state.withingsConfig.clientId, clientSecret: '', accessToken: '', refreshToken: '', expiresAt: 0 },
       aiConfig: { ...state.aiConfig, apiKey: '' },
     };
+    delete safeCopy.githubToken;
     const blob = new Blob([JSON.stringify(safeCopy, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -1134,7 +1703,13 @@ export default function App() {
   const handleImportBackup = (parsed) => {
     setState((prev) => ({
       ...prev,
-      profile: { ...prev.profile, ...(parsed.profile || {}) },
+      onboardingCompleted: true,
+      isDemoMode: parsed.isDemoMode === true ? true : false,
+      profile: {
+        ...prev.profile,
+        ...(parsed.profile || {}),
+        usdaApiKey: parsed.profile?.usdaApiKey || prev.profile?.usdaApiKey || '',
+      },
       staples:
         Array.isArray(parsed.staples) && parsed.staples.length
           ? parsed.staples.map(migrateStaple).filter(Boolean)
@@ -1160,6 +1735,45 @@ export default function App() {
   const isDayCustomized = Boolean(state.customMealsByDate?.[selectedDate]);
   const usdaApiKey = state.profile.usdaApiKey || '';
 
+  const cloudStatusLabel =
+    cloudStatus === 'synced'
+      ? 'Cloud Synced ✓'
+      : cloudStatus === 'syncing'
+      ? 'Syncing…'
+      : cloudStatus === 'error'
+      ? 'Sync Error'
+      : 'Saved locally';
+
+  if (!hydrationDone) {
+    return (
+      <div className="boot-loading-shell" role="status" aria-live="polite">
+        Loading your VeloFuel data…
+      </div>
+    );
+  }
+
+  if (showWelcome || wizardOpen) {
+    return (
+      <>
+        {toast && (
+          <div className="toast" role="status" aria-live="polite">
+            {toast}
+          </div>
+        )}
+        <OnboardingFlow
+          initialMode={wizardOpen ? 'wizard' : 'welcome'}
+          canCancel={wizardOpen}
+          existingState={wizardOpen ? state : null}
+          persistentGranted={persistentGranted}
+          onCancel={() => setWizardOpen(false)}
+          onEnterDemoMode={handleEnterDemoMode}
+          onRestoreFromCloud={handleRestoreFromCloud}
+          onCompleteOnboarding={handleCompleteOnboarding}
+        />
+      </>
+    );
+  }
+
   return (
     <div className="app-shell">
       <header className="top-bar">
@@ -1167,7 +1781,16 @@ export default function App() {
           <img src="./icon-512.jpg" alt="VeloFuel" className="brand-icon" />
           <div>
             <div className="brand-title">VeloFuel</div>
-            <div className="brand-sub">Smart Cycling Fuel</div>
+            <button
+              type="button"
+              className={`sync-status-pill ${cloudStatus}`}
+              onClick={() => setActiveTab('sync')}
+              title="Open Cloud Sync & Durable Storage settings"
+              aria-label={`Sync status: ${cloudStatusLabel}`}
+            >
+              <span className="sync-dot" aria-hidden="true" />
+              <span>{cloudStatusLabel}</span>
+            </button>
           </div>
         </div>
 
@@ -1276,6 +1899,7 @@ export default function App() {
         {activeTab === 'training' && (
           <TrainingView
             selectedDate={selectedDate}
+            todayIso={todayIso}
             onSelectDate={setSelectedDate}
             sessions={state.sessions}
             profile={state.profile}
@@ -1321,6 +1945,18 @@ export default function App() {
             todayLogs={selectedLogs}
             onExportBackup={handleExportBackup}
             onImportBackup={handleImportBackup}
+            cloudConfig={cloudConfig}
+            cloudStatus={cloudStatus}
+            cloudError={cloudError}
+            persistentGranted={persistentGranted}
+            storageWarning={storageWarning}
+            isDemoMode={Boolean(state.isDemoMode)}
+            onUpdateCloudConfig={handleUpdateCloudConfig}
+            onManualCloudSync={handleManualCloudSync}
+            onManualCloudRestore={handleManualCloudRestore}
+            onDisconnectCloud={handleDisconnectCloud}
+            onRestoreSnapshot={handleRestoreSnapshot}
+            onOpenSetupWizard={() => setWizardOpen(true)}
             showToast={showToast}
           />
         )}

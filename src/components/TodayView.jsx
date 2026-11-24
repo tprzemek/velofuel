@@ -408,7 +408,7 @@ export default function TodayView({
   const [newWIntensity, setNewWIntensity] = useState('endurance');
   const [newWKj, setNewWKj] = useState(900);
   const [newWKcal, setNewWKcal] = useState(270);
-  const [newWTiming, setNewWTiming] = useState('morning');
+  const [newWTiming, setNewWTiming] = useState(profile?.defaultWorkoutTiming || 'evening');
   const [newWStatus, setNewWStatus] = useState('completed');
 
   // Pointer-based drag-and-drop timeline card reorder state (works on iOS, Android & Desktop)
