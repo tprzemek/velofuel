@@ -19,7 +19,7 @@ import {
   getIsoDate,
   migrateStaple,
 } from './engine/defaultData';
-import { computeBiometricsSummary } from './engine/biometricsEngine';
+import { computeBiometricsSummary, computeWeeklyCheckIn } from './engine/biometricsEngine';
 import { computeDailyPlan, DEFAULT_MEAL_SLOTS, scaleStapleToTargets } from './engine/fuelingEngine';
 import { syncIntervalsDirect } from './engine/intervalsClient';
 import { exchangeWithingsCode, fetchWithingsMeasurements } from './engine/withingsClient';
@@ -199,6 +199,55 @@ export default function App() {
     [state.logsByDate, selectedDate]
   );
 
+  const yesterdayDate = useMemo(() => shiftIsoDate(selectedDate, -1), [selectedDate]);
+  const isCopyableMealLog = useCallback(
+    (l) =>
+      Boolean(
+        l &&
+          l.type !== 'on_bike' &&
+          l.type !== 'supplement' &&
+          l.slot !== 'on_bike' &&
+          !String(l.slot || '').startsWith('workout-')
+      ),
+    []
+  );
+  const yesterdayMealLogs = useMemo(
+    () => (state.logsByDate[yesterdayDate] || []).filter(isCopyableMealLog),
+    [state.logsByDate, yesterdayDate, isCopyableMealLog]
+  );
+
+  const recentFoods = useMemo(() => {
+    const seen = new Set();
+    const list = [];
+    for (let offset = 0; offset >= -13; offset -= 1) {
+      const iso = shiftIsoDate(selectedDate, offset);
+      const dayLogs = state.logsByDate[iso] || [];
+      for (let i = dayLogs.length - 1; i >= 0; i -= 1) {
+        const entry = dayLogs[i];
+        if (!entry || entry.type !== 'food' || !entry.ingredient) continue;
+        const ing = entry.ingredient;
+        const key = String(ing.name || entry.title || '').trim().toLowerCase();
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        list.push({
+          id: ing.id || `recent-${key}`,
+          name: ing.name || entry.title,
+          defaultGrams: Math.max(1, Math.round(Number(ing.grams) || 100)),
+          defaultRole: ing.role || 'fixed',
+          servings: ing.servings,
+          per100g: ing.per100g || {},
+        });
+        if (list.length >= 8) return list;
+      }
+    }
+    return list;
+  }, [state.logsByDate, selectedDate]);
+
+  const weeklyCheckIn = useMemo(
+    () => computeWeeklyCheckIn(state.biometrics, state.profile, state.logsByDate, state.sessions),
+    [state.biometrics, state.profile, state.logsByDate, state.sessions]
+  );
+
   const handleImportBiometrics = useCallback((entries) => {
     setState((prev) => {
       const map = new Map(prev.biometrics.map((b) => [b.date, b]));
@@ -226,7 +275,7 @@ export default function App() {
         handleImportBiometrics(syncData.biometrics);
       }
       setState((prev) => {
-        // Index previous sessions by id so we preserve per-workout user tweaks (bottleSizeMl, timelineOrder)
+        // Index previous sessions by id so we preserve per-workout user tweaks
         const prevById = new Map(prev.sessions.map((s) => [s.id, s]));
         const incomingIcu = [
           ...(syncData.completedSessions || []),
@@ -243,11 +292,16 @@ export default function App() {
         });
 
         const mergedIcu = incomingIcu.map((s) => {
-          const existing = prevById.get(s.id);
+          const existing =
+            prevById.get(s.id) || (s.pairedEventId ? prevById.get(s.pairedEventId) : null);
           return {
             ...s,
             bottleSizeMl: existing?.bottleSizeMl,
             timelineOrder: existing?.timelineOrder,
+            heatLevel: existing?.heatLevel,
+            sweatRate: existing?.sweatRate,
+            carbBase: existing?.carbBase,
+            saltSource: existing?.saltSource,
           };
         });
 
@@ -420,6 +474,177 @@ export default function App() {
     }));
   };
 
+  const handleUpdateLog = (logId, patch) => {
+    const existing = (state.logsByDate[selectedDate] || []).find((l) => l.id === logId);
+    if (!existing) return;
+    const updatedTitle = patch.title || existing.title || 'item';
+    setState((prev) => {
+      const dayLogs = prev.logsByDate[selectedDate] || [];
+      const nextLogs = dayLogs.map((l) => (l.id === logId ? { ...l, ...patch } : l));
+      return {
+        ...prev,
+        logsByDate: {
+          ...prev.logsByDate,
+          [selectedDate]: nextLogs,
+        },
+      };
+    });
+    showToast(`Updated ${updatedTitle}`);
+  };
+
+  const handleSplitStapleLog = (logId, overrideTargetKcal = null) => {
+    const dayLogs = state.logsByDate[selectedDate] || [];
+    const target = dayLogs.find((l) => l.id === logId);
+    if (!target || target.type !== 'staple') return;
+
+    const template = state.staples.find((s) => s.id === target.stapleId || s.name === target.title);
+    const rawItems =
+      Array.isArray(target.resolvedItems) && target.resolvedItems.length > 0
+        ? target.resolvedItems
+        : template?.ingredients || [];
+    if (rawItems.length === 0) {
+      showToast('No individual ingredients available to split for this meal.');
+      return;
+    }
+
+    // Preserve any portion multiplier the user may have applied before splitting
+    const rawKcal = rawItems.reduce((sum, ing) => {
+      const f = (Number(ing.grams) || 0) / 100;
+      const p = ing.per100g || {};
+      return sum + ((p.carbs || 0) * 4 + (p.protein || 0) * 4 + (p.fat || 0) * 9) * f;
+    }, 0);
+    const effectiveTargetKcal =
+      overrideTargetKcal != null &&
+      Number.isFinite(Number(overrideTargetKcal)) &&
+      Number(overrideTargetKcal) > 0
+        ? Number(overrideTargetKcal)
+        : target.kcal;
+    const ratio = rawKcal > 10 && effectiveTargetKcal > 0 ? effectiveTargetKcal / rawKcal : 1;
+    const nowTime = new Date().toTimeString().slice(0, 5);
+    const ts = Date.now();
+
+    const unpackedEntries = rawItems.map((ing, idx) => {
+      const grams = Math.max(1, Math.round((Number(ing.grams) || 50) * ratio));
+      const f = grams / 100;
+      const p = ing.per100g || {};
+      const carbs = Math.round((p.carbs || 0) * f);
+      const protein = Math.round((p.protein || 0) * f);
+      const fat = Math.round((p.fat || 0) * f);
+      const kcal = carbs * 4 + protein * 4 + fat * 9;
+      const clonedIngredient = {
+        ...ing,
+        id: `ing-split-${ts}-${idx}`,
+        grams,
+        per100g: { ...p },
+      };
+      return {
+        id: `log-food-${ts}-${idx}-${Math.random().toString(36).slice(2, 5)}`,
+        slot: target.slot,
+        type: 'food',
+        title: ing.name,
+        detail: formatFoodAmount(grams, units),
+        ingredient: clonedIngredient,
+        carbs,
+        protein,
+        fat,
+        kcal,
+        uncertaintyPct: 0,
+        micros: {
+          fiber: Number(((p.fiber || 0) * f).toFixed(1)),
+          iron: Number(((p.iron || 0) * f).toFixed(1)),
+          vitC: Math.round((p.vitC || 0) * f),
+          calcium: Math.round((p.calcium || 0) * f),
+          vitD: Number(((p.vitD || 0) * f).toFixed(1)),
+          magnesium: Math.round((p.magnesium || 0) * f),
+          sodium: Math.round((p.sodium || 0) * f),
+        },
+        loggedAt: target.loggedAt || nowTime,
+      };
+    });
+
+    setState((prev) => {
+      const current = prev.logsByDate[selectedDate] || [];
+      const nextLogs = [];
+      for (const item of current) {
+        if (item.id === logId) {
+          nextLogs.push(...unpackedEntries);
+        } else {
+          nextLogs.push(item);
+        }
+      }
+      return {
+        ...prev,
+        logsByDate: {
+          ...prev.logsByDate,
+          [selectedDate]: nextLogs,
+        },
+      };
+    });
+    showToast(`Split "${target.title}" into ${unpackedEntries.length} editable foods.`);
+  };
+
+  const handleCopyYesterdayMeal = (slotId, slotLabel = 'meal') => {
+    const prevDate = shiftIsoDate(selectedDate, -1);
+    const sourceItems = (state.logsByDate[prevDate] || []).filter(
+      (l) => isCopyableMealLog(l) && l.slot === slotId
+    );
+    if (sourceItems.length === 0) return;
+
+    const ts = Date.now();
+    const nowTime = new Date().toTimeString().slice(0, 5);
+    const cloned = sourceItems.map((item, idx) => ({
+      ...item,
+      id: `log-copy-${ts}-${idx}-${Math.random().toString(36).slice(2, 5)}`,
+      ingredient: item.ingredient ? { ...item.ingredient, per100g: { ...(item.ingredient.per100g || {}) } } : undefined,
+      resolvedItems: Array.isArray(item.resolvedItems)
+        ? item.resolvedItems.map((ri) => ({ ...ri, per100g: { ...(ri.per100g || {}) } }))
+        : undefined,
+      micros: { ...(item.micros || {}) },
+      loggedAt: nowTime,
+    }));
+
+    setState((prev) => ({
+      ...prev,
+      logsByDate: {
+        ...prev.logsByDate,
+        [selectedDate]: [...(prev.logsByDate[selectedDate] || []), ...cloned],
+      },
+    }));
+    showToast(`Copied ${slotLabel} from yesterday (${cloned.length} item${cloned.length > 1 ? 's' : ''}).`);
+  };
+
+  const handleCopyYesterdayDay = () => {
+    const prevDate = shiftIsoDate(selectedDate, -1);
+    const sourceItems = (state.logsByDate[prevDate] || []).filter(isCopyableMealLog);
+    if (sourceItems.length === 0) return;
+
+    const validMealSlotIds = new Set(dailyPlan.meals.filter((m) => !m.isWorkout).map((m) => m.slot));
+    const fallbackSlot = dailyPlan.meals.find((m) => !m.isWorkout)?.slot || 'breakfast';
+    const ts = Date.now();
+    const nowTime = new Date().toTimeString().slice(0, 5);
+
+    const cloned = sourceItems.map((item, idx) => ({
+      ...item,
+      id: `log-copy-${ts}-${idx}-${Math.random().toString(36).slice(2, 5)}`,
+      slot: validMealSlotIds.has(item.slot) ? item.slot : fallbackSlot,
+      ingredient: item.ingredient ? { ...item.ingredient, per100g: { ...(item.ingredient.per100g || {}) } } : undefined,
+      resolvedItems: Array.isArray(item.resolvedItems)
+        ? item.resolvedItems.map((ri) => ({ ...ri, per100g: { ...(ri.per100g || {}) } }))
+        : undefined,
+      micros: { ...(item.micros || {}) },
+      loggedAt: nowTime,
+    }));
+
+    setState((prev) => ({
+      ...prev,
+      logsByDate: {
+        ...prev.logsByDate,
+        [selectedDate]: [...(prev.logsByDate[selectedDate] || []), ...cloned],
+      },
+    }));
+    showToast(`Copied ${cloned.length} meal item${cloned.length > 1 ? 's' : ''} from yesterday (workouts skipped).`);
+  };
+
   const handleLogOnBike = (slot, onBikePlan) => {
     handleLogEntry({
       id: `log-bike-${Date.now()}`,
@@ -515,6 +740,7 @@ export default function App() {
       slot: slot.slot,
       type: 'staple',
       stapleId: staple.id,
+      resolvedItems: scaled.resolvedItems,
       title: staple.name,
       detail: formattedDetail,
       carbs: scaled.carbs,
@@ -562,6 +788,16 @@ export default function App() {
     if (asDefault) {
       showToast(`Saved ${bottleSizeMl} ml as your default bottle size.`);
     }
+  };
+
+  const handleUpdateSessionFuelSettings = (date, sessionId, patch) => {
+    setState((prev) => ({
+      ...prev,
+      sessions: prev.sessions.map((s) => {
+        const matches = sessionId ? s.id === sessionId : s.date === date;
+        return matches ? { ...s, ...patch } : s;
+      }),
+    }));
   };
 
   const handleReorderTimeline = (date, newOrder) => {
@@ -992,6 +1228,7 @@ export default function App() {
             usdaApiKey={usdaApiKey}
             sessions={selectedSessions}
             logs={selectedLogs}
+            yesterdayMealLogs={yesterdayMealLogs}
             staples={state.staples}
             supplements={state.supplements}
             biometricsSummary={biometricsSummary}
@@ -1007,11 +1244,16 @@ export default function App() {
             onSaveSlotAsStaple={handleSaveSlotAsStaple}
             onLogDailyStack={handleLogDailyStack}
             onSetRideBottleSize={handleSetRideBottleSize}
+            onUpdateSessionFuelSettings={handleUpdateSessionFuelSettings}
             onReorderTimeline={handleReorderTimeline}
             onDeleteMealSlot={handleDeleteMealSlot}
             onAddMealSlot={handleAddMealSlot}
             onResetDayMeals={handleResetDayMeals}
             onDeleteLog={handleDeleteLog}
+            onUpdateLog={handleUpdateLog}
+            onSplitStapleLog={handleSplitStapleLog}
+            onCopyYesterdayMeal={handleCopyYesterdayMeal}
+            onCopyYesterdayDay={handleCopyYesterdayDay}
             onLogOnBike={handleLogOnBike}
             onSaveOnBikeLog={handleSaveOnBikeLog}
             onCompleteRide={handleCompleteRide}
@@ -1049,6 +1291,7 @@ export default function App() {
             profile={state.profile}
             units={units}
             biometricsSummary={biometricsSummary}
+            weeklyCheckIn={weeklyCheckIn}
             onUpdateProfile={handleUpdateProfile}
             onAddBiometric={handleAddBiometric}
             onImportBiometrics={handleImportBiometrics}
@@ -1122,6 +1365,7 @@ export default function App() {
         slotInfo={quickFoodModal.slotInfo}
         units={units}
         usdaApiKey={usdaApiKey}
+        recentFoods={recentFoods}
         onLogEntry={handleLogEntry}
       />
 

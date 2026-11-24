@@ -64,6 +64,48 @@ export const FUEL_CATEGORY_META = {
 
 export const BOTTLE_SIZE_OPTIONS = [500, 550, 650, 750, 950];
 
+export const HEAT_LEVEL_OPTIONS = [
+  { value: 'cool', label: 'Cool', sub: '<15°C', fluidMult: 0.85, sodiumMult: 0.85 },
+  { value: 'moderate', label: 'Moderate', sub: '15–22°C', fluidMult: 1.0, sodiumMult: 1.0 },
+  { value: 'warm', label: 'Warm', sub: '23–28°C', fluidMult: 1.2, sodiumMult: 1.25 },
+  { value: 'hot', label: 'Hot / Indoor', sub: '>28°C', fluidMult: 1.38, sodiumMult: 1.45 },
+];
+
+export const SWEAT_RATE_OPTIONS = [
+  { value: 'light', label: 'Light', fluidMult: 0.82, sodiumMult: 0.8 },
+  { value: 'medium', label: 'Medium', fluidMult: 1.0, sodiumMult: 1.0 },
+  { value: 'heavy', label: 'Heavy', fluidMult: 1.28, sodiumMult: 1.35 },
+];
+
+function formatQuarterFraction(val) {
+  const quarters = Math.round(val * 4);
+  if (quarters <= 0) return '0';
+  const whole = Math.floor(quarters / 4);
+  const rem = quarters % 4;
+  const fracMap = { 0: '', 1: '¼', 2: '½', 3: '¾' };
+  if (whole === 0) return fracMap[rem] || '¼';
+  return `${whole}${fracMap[rem]}`;
+}
+
+function formatTbspMeasure(grams, gramsPerTbsp = 12.5) {
+  const g = Math.max(0, Number(grams) || 0);
+  if (g < 2) return '0 tbsp';
+  const tbsp = g / gramsPerTbsp;
+  if (tbsp < 0.35) return '1 tsp';
+  return `${formatQuarterFraction(tbsp)} tbsp`;
+}
+
+function formatTspMeasure(grams, gramsPerTsp = 5.9) {
+  const g = Math.max(0, Number(grams) || 0);
+  if (g < 0.25) return 'pinch';
+  const eighths = Math.max(1, Math.round((g / gramsPerTsp) * 8));
+  const whole = Math.floor(eighths / 8);
+  const rem = eighths % 8;
+  const fracMap = { 0: '', 1: '⅛', 2: '¼', 3: '⅜', 4: '½', 5: '⅝', 6: '¾', 7: '⅞' };
+  if (whole === 0) return `${fracMap[rem]} tsp`;
+  return `${whole}${fracMap[rem]} tsp`;
+}
+
 export function estimateSessionKj(session, ftp = 290) {
   if (!session || session.intensity === 'rest' || !session.durationMin) return 0;
   const kind = normalizeSportKind(session.sport, session.title);
@@ -169,23 +211,37 @@ function classifyDayWorkouts(workouts, totalExerciseKcal) {
   return best;
 }
 
-// Expenditure-matched & progressive on-bike fueling with custom bottle sizes and practical salt/tablet recipes
+// Expenditure-matched & progressive on-bike fueling with heat/sweat tuning, custom bottle sizes, and DIY bottle mix recipes
 export function computeOnBikePlan(session, category, exerciseKcal, options = {}) {
-  if (!session || !session.durationMin || session.intensity === 'rest') {
+  const durationMin = Number(session?.durationMin);
+  if (!session || !(durationMin > 0) || session.intensity === 'rest') {
     return null;
   }
   const sportKind = normalizeSportKind(session.sport, session.title);
   // Only rides (and long runs >= 65m) get an active intra-workout carb/bottle plan; gym/yoga/short spins do not!
-  if (sportKind !== 'ride' && !(sportKind === 'run' && session.durationMin >= 65)) {
+  if (sportKind !== 'ride' && !(sportKind === 'run' && durationMin >= 65)) {
     return null;
   }
 
-  const hrs = session.durationMin / 60;
-  const kcalPerHr = exerciseKcal / Math.max(hrs, 0.25);
+  const hrs = durationMin / 60;
+  const safeKcal = Math.max(0, Number(exerciseKcal) || 0);
+  const kcalPerHr = safeKcal / Math.max(hrs, 0.25);
   const meta = INTENSITY_META[session.intensity] || INTENSITY_META.endurance;
   const bottleSizeMl = Math.max(300, Number(session.bottleSizeMl || options.defaultBottleMl) || 650);
   const tabletMg = Math.max(100, Number(options.electrolyteTabMg) || 500);
   const units = options.units || getUnits();
+
+  const rawHeatLevel = session.heatLevel || options.heatLevel || 'moderate';
+  const rawSweatRate = session.sweatRate || options.sweatRate || 'medium';
+  const rawCarbBase = session.carbBase || options.carbBase || 'sugar';
+  const rawSaltSource = session.saltSource || options.saltSource || 'table_salt';
+
+  const heatMeta = HEAT_LEVEL_OPTIONS.find((h) => h.value === rawHeatLevel) || HEAT_LEVEL_OPTIONS[1];
+  const sweatMeta = SWEAT_RATE_OPTIONS.find((s) => s.value === rawSweatRate) || SWEAT_RATE_OPTIONS[1];
+  const heatLevel = heatMeta.value;
+  const sweatRate = sweatMeta.value;
+  const carbBase = rawCarbBase === 'malto_fructose' ? 'malto_fructose' : 'sugar';
+  const saltSource = rawSaltSource === 'sodium_citrate' ? 'sodium_citrate' : 'table_salt';
 
   // Estimate carbohydrate burn per hour (g/hr)
   const carbBurnGPerHr = (kcalPerHr * meta.carbFractionBurn) / 4;
@@ -193,9 +249,9 @@ export function computeOnBikePlan(session, category, exerciseKcal, options = {})
   let carbsPerHour = 0;
   let progressiveRamp = null;
 
-  if (session.durationMin <= 55 && (session.intensity === 'recovery' || session.intensity === 'endurance')) {
+  if (durationMin <= 55 && (session.intensity === 'recovery' || session.intensity === 'endurance')) {
     carbsPerHour = 0;
-  } else if (session.durationMin <= 75) {
+  } else if (durationMin <= 75) {
     carbsPerHour = session.intensity === 'threshold' || session.intensity === 'vo2max'
       ? Math.round(Math.min(55, Math.max(30, carbBurnGPerHr * 0.35)) / 5) * 5
       : Math.round(Math.min(35, Math.max(20, carbBurnGPerHr * 0.28)) / 5) * 5;
@@ -205,7 +261,7 @@ export function computeOnBikePlan(session, category, exerciseKcal, options = {})
     const cap = sportKind === 'run' ? 65 : category === 'VERY_HIGH' ? 95 : category === 'HIGH' ? 85 : 65;
     carbsPerHour = Math.round(Math.min(cap, Math.max(30, rawRate)) / 5) * 5;
 
-    if (session.durationMin >= 150 && carbsPerHour >= 60) {
+    if (durationMin >= 150 && carbsPerHour >= 60) {
       const hr1 = Math.max(45, Math.round((carbsPerHour * 0.78) / 5) * 5);
       const hr2Plus = Math.min(100, Math.round((carbsPerHour * 1.1) / 5) * 5);
       progressiveRamp = `Hr 1: ${hr1}g → Hr 2+: ${hr2Plus}g/h`;
@@ -213,15 +269,65 @@ export function computeOnBikePlan(session, category, exerciseKcal, options = {})
   }
 
   const totalCarbs = Math.round(carbsPerHour * hrs);
-  const fluidMlPerHr = category === 'HIGH' || category === 'VERY_HIGH' ? 700 : 550;
+  const baseFluidMlPerHr = category === 'HIGH' || category === 'VERY_HIGH' ? 700 : 550;
+  const baseSodiumMgPerHr = category === 'HIGH' || category === 'VERY_HIGH' ? 650 : 450;
+
+  // Exact v10 baseline when moderate + medium (1.0 * 1.0); smooth physiological scaling otherwise
+  const fluidMlPerHr = Math.min(
+    1150,
+    Math.max(400, Math.round((baseFluidMlPerHr * heatMeta.fluidMult * sweatMeta.fluidMult) / 25) * 25)
+  );
   const totalFluidMl = Math.round(fluidMlPerHr * hrs);
-  const sodiumMgPerHr = category === 'HIGH' || category === 'VERY_HIGH' ? 650 : 450;
+  const sodiumMgPerHr = Math.min(
+    1300,
+    Math.max(300, Math.round((baseSodiumMgPerHr * heatMeta.sodiumMult * sweatMeta.sodiumMult) / 25) * 25)
+  );
   const totalSodiumMg = Math.round(sodiumMgPerHr * hrs);
   const bottles = Math.max(1, Math.ceil(totalFluidMl / bottleSizeMl));
   const carbsPerBottle = Math.round(totalCarbs / bottles);
   const sodiumPerBottleMg = Math.round(totalSodiumMg / bottles);
   const bottleLabel = formatLiquid(bottleSizeMl, units);
   const bottleSaltText = formatSodiumPractical(sodiumPerBottleMg, tabletMg);
+
+  // DIY Bottle Mix Studio recipe (per bottle)
+  const sugarG = carbsPerBottle;
+  const sugarSpoons = formatTbspMeasure(sugarG, 12.5);
+  const maltoG = Math.round(carbsPerBottle * (2 / 3));
+  const fructoseG = Math.max(0, carbsPerBottle - maltoG);
+  const maltoSpoons = formatTbspMeasure(maltoG, 9.5);
+  const fructoseSpoons = formatTbspMeasure(fructoseG, 12.0);
+  // Table salt: ~38.8% Na => 2.58g / 1000mg Na; Sodium citrate: ~23% Na => 4.35g / 1000mg Na
+  const tableSaltG = Number((sodiumPerBottleMg / 388).toFixed(1));
+  const tableSaltSpoons = formatTspMeasure(tableSaltG, 5.9);
+  const sodiumCitrateG = Number((sodiumPerBottleMg / 230).toFixed(1));
+  const sodiumCitrateSpoons = formatTspMeasure(sodiumCitrateG, 4.35);
+
+  const diyRecipe = {
+    carbBase,
+    saltSource,
+    sugarG,
+    sugarSpoons,
+    maltoG,
+    fructoseG,
+    maltoSpoons,
+    fructoseSpoons,
+    tableSaltG,
+    tableSaltSpoons,
+    sodiumCitrateG,
+    sodiumCitrateSpoons,
+    highCarbHint:
+      carbsPerBottle > 80
+        ? 'Over 80g/bottle gets very sweet with pure sugar — add a squeeze of lemon or switch to Malto + Fructose (2:1).'
+        : null,
+    highSaltHint:
+      sodiumMgPerHr >= 750
+        ? 'At high salt levels, sodium citrate tastes milder and is gentler on your stomach than table salt.'
+        : null,
+    saltNote:
+      saltSource === 'sodium_citrate'
+        ? 'Gentler on your stomach at high salt levels (23% sodium)'
+        : 'Everyday pantry table salt (39% sodium)',
+  };
 
   let note = `Short easy spin — ${bottles}× ${bottleLabel} water + ${bottleSaltText} per bottle. Save carbs for meals.`;
   if (sportKind === 'run') {
@@ -240,6 +346,10 @@ export function computeOnBikePlan(session, category, exerciseKcal, options = {})
     totalKcal: totalCarbs * 4,
     kcalPerHr: Math.round(kcalPerHr),
     progressiveRamp,
+    heatLevel,
+    sweatRate,
+    carbBase,
+    saltSource,
     fluidMlPerHr,
     totalFluidMl,
     bottleSizeMl,
@@ -250,6 +360,7 @@ export function computeOnBikePlan(session, category, exerciseKcal, options = {})
     sodiumPerBottleMg,
     bottleSaltText,
     bottles,
+    diyRecipe,
     note,
   };
 }
@@ -977,3 +1088,277 @@ export function sumDailyLogs(logs = []) {
     }
   );
 }
+
+function formatRideMin(mins) {
+  const m = Math.max(0, Math.round(mins));
+  const h = Math.floor(m / 60);
+  const rem = m % 60;
+  return `${h}:${String(rem).padStart(2, '0')}`;
+}
+
+// Deterministic chronological ride eating & bottle drinking schedule (EatMyRide / Saturday style)
+export function buildRideEatingSchedule(durationMin, pack = {}, onBikePlan = null) {
+  const rawDur = Number(durationMin);
+  if (!(rawDur > 0)) {
+    return [];
+  }
+  const dur = Math.round(rawDur);
+  const carbBottles = Math.max(0, Math.round(Number(pack.carbBottles) || 0));
+  const gels = Math.max(0, Math.round(Number(pack.gels) || 0));
+  const bars = Math.max(0, Math.round(Number(pack.bars) || 0));
+  const tabs = Math.max(0, Math.round(Number(pack.tabs) || 0));
+
+  const cues = [];
+
+  // Bottle milestones divided evenly across ride duration
+  if (carbBottles > 0) {
+    const minsPerBottle = dur / carbBottles;
+    for (let i = 0; i < carbBottles; i += 1) {
+      const startM = Math.round(i * minsPerBottle);
+      const endM = Math.round((i + 1) * minsPerBottle);
+      const bottleCarbs = onBikePlan?.carbsPerBottle || 0;
+      cues.push({
+        minute: startM,
+        timeLabel: `${formatRideMin(startM)}–${formatRideMin(endM)}`,
+        kind: 'bottle',
+        text: `Sip Carb Bottle #${i + 1} steadily every 15 min${bottleCarbs > 0 ? ` (~${bottleCarbs}g C)` : ''}`,
+      });
+    }
+  }
+
+  // Solids first (earlier when gut is fresher), then gels — strictly outside the final 15 min
+  const eatables = [];
+  for (let i = 0; i < bars; i += 1) {
+    eatables.push({ kind: 'bar', text: `Bar / Rice Cake #${i + 1} (40g C) + water sip` });
+  }
+  for (let i = 0; i < gels; i += 1) {
+    eatables.push({ kind: 'gel', text: `Energy Gel #${i + 1} (25g C) + water sip` });
+  }
+
+  const usableWindow = Math.max(0, dur - 15);
+  if (eatables.length > 0) {
+    const count = eatables.length;
+    const idealStep = Math.floor(usableWindow / (count + 1));
+    if (usableWindow === 0) {
+      eatables.forEach((item) => {
+        cues.push({
+          minute: 0,
+          timeLabel: formatRideMin(0),
+          kind: item.kind,
+          text: item.text,
+        });
+      });
+    } else if (idealStep >= 15) {
+      eatables.forEach((item, idx) => {
+        const targetMin = Math.min(usableWindow, Math.max(Math.min(20, usableWindow), idealStep * (idx + 1)));
+        const flooredMin = Math.min(usableWindow, Math.floor(targetMin / 5) * 5);
+        cues.push({
+          minute: flooredMin,
+          timeLabel: formatRideMin(flooredMin),
+          kind: item.kind,
+          text: item.text,
+        });
+      });
+    } else {
+      const minStart = count === 1 ? usableWindow : Math.min(10, usableWindow);
+      const span = Math.max(0, usableWindow - minStart);
+      const useFiveMinSnap = count === 1 || span / Math.max(1, count - 1) >= 7.5;
+      eatables.forEach((item, idx) => {
+        const rawMin = count === 1 ? usableWindow : minStart + (idx / (count - 1)) * span;
+        const minute = useFiveMinSnap
+          ? Math.min(usableWindow, Math.floor(rawMin / 5) * 5)
+          : Math.min(usableWindow, Math.floor(rawMin));
+        cues.push({
+          minute,
+          timeLabel: formatRideMin(minute),
+          kind: item.kind,
+          text: item.text,
+        });
+      });
+    }
+  }
+
+  if (tabs > 0 && carbBottles === 0) {
+    cues.push({
+      minute: 0,
+      timeLabel: '0:00',
+      kind: 'electrolyte',
+      text: `Dissolve ${tabs} electrolyte tab${tabs > 1 ? 's' : ''} into your water bottle${tabs > 1 ? 's' : ''} before rolling out`,
+    });
+  }
+
+  if (cues.length === 0) {
+    cues.push({
+      minute: 0,
+      timeLabel: `0:00–${formatRideMin(dur)}`,
+      kind: 'bottle',
+      text: 'Sip water + electrolytes steadily every 15–20 min.',
+    });
+  }
+
+  cues.sort((a, b) => a.minute - b.minute || (a.kind === 'bottle' ? -1 : 1));
+  return cues;
+}
+
+// Deterministic Intra-Day Fuel Wave Curve (06:00–22:00) synced to the user's exact ordered timeline
+export function computeIntraDayEnergyCurve(plan, logs = []) {
+  const slots = Array.isArray(plan?.meals) ? plan.meals : [];
+  const offBikeBurn = Math.max(1200, Number(plan?.offBikeTdee) || 2000);
+  const hourlyBaselineDrain = offBikeBurn / 16;
+
+  // Map ordered timeline slots monotonically onto waking hours (7..20)
+  const n = slots.length;
+  const slotHours = slots.map((s, idx) => {
+    const ideal =
+      s.kind === 'breakfast'
+        ? 7.5
+        : s.kind === 'lunch'
+        ? 12.5
+        : s.kind === 'snack'
+        ? 15.5
+        : s.kind === 'dinner'
+        ? 19.5
+        : s.isWorkout
+        ? s.workout?.timing === 'morning'
+          ? 9.0
+          : s.workout?.timing === 'midday'
+          ? 13.5
+          : 17.5
+        : 7.5 + (idx / Math.max(1, n - 1)) * 12;
+    return ideal;
+  });
+
+  // Enforce monotonic order matching the user's dragged timeline
+  for (let i = 1; i < slotHours.length; i += 1) {
+    if (slotHours[i] <= slotHours[i - 1] + 1.0) {
+      slotHours[i] = slotHours[i - 1] + 1.25;
+    }
+  }
+  if (slotHours.length > 1 && slotHours[slotHours.length - 1] > 20.5) {
+    const startH = 7.5;
+    const endH = 20.0;
+    for (let i = 0; i < slotHours.length; i += 1) {
+      slotHours[i] = startH + (i / (slotHours.length - 1)) * (endH - startH);
+    }
+  }
+
+  // Group logged calories by slot (never counts unlogged meals as eaten!)
+  const loggedKcalBySlot = new Map();
+  let totalLoggedFoodKcal = 0;
+  for (const l of logs || []) {
+    if (!l || l.type === 'supplement') continue;
+    const k = Math.max(0, Number(l.kcal) || 0);
+    loggedKcalBySlot.set(l.slot, (loggedKcalBySlot.get(l.slot) || 0) + k);
+    totalLoggedFoodKcal += k;
+  }
+
+  // Build hourly event deltas across 06:00–22:00
+  const plannedDeltaByHour = new Map();
+  const loggedDeltaByHour = new Map();
+  const markers = [];
+  let hasLoggedWorkout = false;
+
+  slots.forEach((slot, idx) => {
+    const hourInt = Math.min(21, Math.max(7, Math.round(slotHours[idx])));
+    const loggedHere = loggedKcalBySlot.get(slot.slot) || 0;
+    const hasLoggedHere = loggedHere > 0;
+
+    if (slot.isWorkout) {
+      const burnKcal = Math.max(0, Number(slot.workout?.kcal) || 0);
+      const plannedFuelKcal = Math.max(0, Number(slot.workout?.onBikePlan?.totalKcal) || 0);
+      const isWorkoutLogged = slot.workout?.status === 'completed' || hasLoggedHere;
+      const netPlanned = plannedFuelKcal - burnKcal;
+      plannedDeltaByHour.set(hourInt, (plannedDeltaByHour.get(hourInt) || 0) + netPlanned);
+      if (isWorkoutLogged) {
+        hasLoggedWorkout = true;
+        const netLogged = loggedHere - burnKcal;
+        loggedDeltaByHour.set(hourInt, (loggedDeltaByHour.get(hourInt) || 0) + netLogged);
+      }
+      markers.push({
+        hour: hourInt,
+        type: 'workout',
+        label: slot.workout?.title || slot.label,
+        logged: isWorkoutLogged,
+      });
+    } else {
+      const plannedMealKcal = hasLoggedHere ? loggedHere : Math.max(0, Number(slot.targetKcal) || 0);
+      plannedDeltaByHour.set(hourInt, (plannedDeltaByHour.get(hourInt) || 0) + plannedMealKcal);
+      if (hasLoggedHere) {
+        loggedDeltaByHour.set(hourInt, (loggedDeltaByHour.get(hourInt) || 0) + loggedHere);
+      }
+      markers.push({
+        hour: hourInt,
+        type: 'meal',
+        label: slot.baseLabel || slot.label,
+        logged: hasLoggedHere,
+      });
+    }
+  });
+
+  // Start morning with a realistic +150 kcal buffer so a well-paced day stays in the shaded balanced band
+  let plannedBal = 150;
+  let loggedBal = 150;
+  const points = [];
+
+  for (let h = 6; h <= 22; h += 1) {
+    if (h > 6) {
+      plannedBal -= hourlyBaselineDrain;
+      loggedBal -= hourlyBaselineDrain;
+    }
+    plannedBal += plannedDeltaByHour.get(h) || 0;
+    loggedBal += loggedDeltaByHour.get(h) || 0;
+
+    const label = h === 12 ? '12p' : h > 12 ? `${h - 12}p` : `${h}a`;
+    points.push({
+      hour: h,
+      label,
+      plannedBalance: Math.round(plannedBal),
+      loggedBalance: Math.round(loggedBal),
+    });
+  }
+
+  // Determine latest logged hour so solid logged line highlights actual progress cleanly
+  const hasLoggedAny = totalLoggedFoodKcal > 0 || hasLoggedWorkout;
+  const loggedMarkerHours = markers.filter((m) => m.logged).map((m) => m.hour);
+  const lastLoggedHour = hasLoggedAny && loggedMarkerHours.length > 0 ? Math.max(...loggedMarkerHours) : 6;
+  const minPlanned = Math.min(...points.map((p) => p.plannedBalance));
+  const hasWorkout = slots.some((s) => s.isWorkout);
+
+  let status = 'Ready to Fuel';
+  let statusTone = 'slate';
+  let summaryNote = hasWorkout
+    ? 'Follow your planned meals around today’s workout to keep energy steady all day.'
+    : 'Spacing meals evenly keeps energy steady and prevents late-evening hunger.';
+
+  if (totalLoggedFoodKcal > 0) {
+    const pctLogged = Math.round((totalLoggedFoodKcal / Math.max(1, plan?.targets?.kcal || 2000)) * 100);
+    if (pctLogged >= 85) {
+      status = 'Well Fueled';
+      statusTone = 'high';
+      summaryNote = 'Solid fueling across the day — energy balance stays right in your target zone.';
+    } else if (minPlanned < -600 && hasWorkout) {
+      status = 'Big Ride Dip Ahead';
+      statusTone = 'med';
+      summaryNote = 'Eat your pre-ride snack 60–90 min before training and bring bottles so energy doesn’t dip too deep.';
+    } else {
+      status = `${pctLogged}% Fueled So Far`;
+      statusTone = 'high';
+      summaryNote = 'Solid line shows what you’ve logged; dashed line projects the rest of your plan.';
+    }
+  } else if (hasWorkout) {
+    status = 'Plan Ready';
+    statusTone = 'high';
+  }
+
+  return {
+    points,
+    markers,
+    lastLoggedHour,
+    hasLoggedAny,
+    balancedBand: { min: -350, max: 350 },
+    status,
+    statusTone,
+    summaryNote,
+  };
+}
+

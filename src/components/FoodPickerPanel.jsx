@@ -1,11 +1,29 @@
 import { useState } from 'react';
-import { Search, ScanBarcode, Plus, Check, Globe } from 'lucide-react';
-import { searchLocalWholeFoods, searchPackagedFoods } from '../engine/foodDatabase';
-import { foodDisplayToGrams, foodUnitLabel, formatFoodAmount } from '../engine/units';
+import { Search, ScanBarcode, Plus, Check, Globe, Clock, SlidersHorizontal } from 'lucide-react';
+import {
+  getFoodServings,
+  isPackagedFood,
+  searchLocalWholeFoods,
+  searchPackagedFoods,
+} from '../engine/foodDatabase';
+import {
+  foodDisplayToGrams,
+  foodUnitLabel,
+  formatFoodAmount,
+  gramsToFoodDisplay,
+} from '../engine/units';
 import BarcodeScannerModal from './BarcodeScannerModal';
+import NumericInput from './NumericInput';
 
-export default function FoodPickerPanel({ onAddIngredient, buttonLabel = 'Add', units, usdaApiKey = '' }) {
+export default function FoodPickerPanel({
+  onAddIngredient,
+  buttonLabel = 'Add',
+  units,
+  usdaApiKey = '',
+  recentFoods = [],
+}) {
   const [query, setQuery] = useState('');
+  const [foodFilter, setFoodFilter] = useState('all'); // 'all' | 'whole' | 'packaged'
   const [onlineResults, setOnlineResults] = useState([]);
   const [onlineSources, setOnlineSources] = useState([]);
   const [onlineWarning, setOnlineWarning] = useState('');
@@ -14,16 +32,26 @@ export default function FoodPickerPanel({ onAddIngredient, buttonLabel = 'Add', 
   const [showCustom, setShowCustom] = useState(false);
   const [scannerOpen, setScannerOpen] = useState(false);
 
-  // Free-form custom food inputs
+  // Per-item expanded portion / household serving state
+  const [expandedItemId, setExpandedItemId] = useState(null);
+  const [gramsByItemId, setGramsByItemId] = useState({});
+
+  // Free-form custom food inputs (NumericInput backed)
   const foodUnit = foodUnitLabel(units);
   const [customName, setCustomName] = useState('');
-  const [customAmount, setCustomAmount] = useState(foodUnit === 'g' ? '100' : foodUnit === 'oz' ? '3.5' : '0.25');
+  const [customAmount, setCustomAmount] = useState(foodUnit === 'g' ? 100 : foodUnit === 'oz' ? 3.5 : 0.25);
   const [customCarbs, setCustomCarbs] = useState('');
   const [customProt, setCustomProt] = useState('');
   const [customFat, setCustomFat] = useState('');
   const [customRole, setCustomRole] = useState('fixed');
 
-  const localResults = searchLocalWholeFoods(query);
+  const localResults = searchLocalWholeFoods(query, foodFilter);
+  const filteredOnlineResults =
+    foodFilter === 'whole'
+      ? onlineResults.filter((item) => !isPackagedFood(item))
+      : foodFilter === 'packaged'
+      ? onlineResults.filter((item) => isPackagedFood(item))
+      : onlineResults;
 
   const handleSearchOnline = async () => {
     const q = query.trim();
@@ -46,7 +74,9 @@ export default function FoodPickerPanel({ onAddIngredient, buttonLabel = 'Add', 
   };
 
   const emitFood = (item, overrideGrams, overrideRole) => {
-    const grams = Math.max(1, Number(overrideGrams ?? item.grams ?? item.defaultGrams) || 100);
+    const chosenGrams =
+      overrideGrams ?? gramsByItemId[item.id] ?? item.grams ?? item.defaultGrams ?? 100;
+    const grams = Math.max(1, Math.round(Number(chosenGrams) || 100));
     const role = overrideRole ?? item.role ?? item.defaultRole ?? 'fixed';
     onAddIngredient({
       id: `ing-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -55,6 +85,7 @@ export default function FoodPickerPanel({ onAddIngredient, buttonLabel = 'Add', 
       minGrams: Math.max(5, Math.round((grams * 0.4) / 5) * 5),
       maxGrams: Math.max(grams + 80, Math.round((grams * 2.2) / 5) * 5),
       role,
+      servings: getFoodServings(item),
       per100g: {
         carbs: Number(item.per100g?.carbs || 0),
         protein: Number(item.per100g?.protein || 0),
@@ -70,8 +101,7 @@ export default function FoodPickerPanel({ onAddIngredient, buttonLabel = 'Add', 
     });
   };
 
-  const handleAddCustom = (e) => {
-    e.preventDefault();
+  const handleAddCustom = () => {
     if (!customName.trim()) return;
     const grams = Math.max(1, foodDisplayToGrams(Number(customAmount) || 100, units));
     emitFood(
@@ -93,6 +123,126 @@ export default function FoodPickerPanel({ onAddIngredient, buttonLabel = 'Add', 
     setShowCustom(false);
   };
 
+  const renderFoodRow = (item, isOnline = false) => {
+    const activeGrams = gramsByItemId[item.id] ?? item.defaultGrams ?? 100;
+    const isExpanded = expandedItemId === item.id;
+    const servings = getFoodServings(item);
+    const f = activeGrams / 100;
+    const prevC = Math.round((item.per100g?.carbs || 0) * f);
+    const prevP = Math.round((item.per100g?.protein || 0) * f);
+    const prevF = Math.round((item.per100g?.fat || 0) * f);
+    const prevKcal = prevC * 4 + prevP * 4 + prevF * 9;
+
+    return (
+      <div key={item.id} className="food-picker-row">
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            gap: 8,
+          }}
+        >
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontWeight: 700, fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+              <span>{item.name}</span>
+              {item.source && (
+                <span
+                  className="carb-badge low"
+                  style={{ fontSize: '0.58rem', padding: '1px 6px', fontWeight: 700 }}
+                >
+                  {item.source}
+                </span>
+              )}
+            </div>
+            <div className="mono" style={{ fontSize: '0.7rem', color: 'var(--ink-muted)', marginTop: 2 }}>
+              /100g: {item.per100g.carbs}C · {item.per100g.protein}P · {item.per100g.fat}F ·{' '}
+              <strong>{formatFoodAmount(activeGrams, units)}</strong>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0 }}>
+            <button
+              type="button"
+              className="btn btn-sm"
+              style={{ padding: '4px 7px', fontSize: '0.68rem' }}
+              onClick={() => setExpandedItemId(isExpanded ? null : item.id)}
+              aria-expanded={isExpanded}
+              aria-label={`Choose serving for ${item.name}`}
+              title="Choose household serving or exact weight"
+            >
+              <SlidersHorizontal size={12} /> {isExpanded ? 'Hide' : 'Serving'}
+            </button>
+            <button
+              type="button"
+              className={`btn btn-sm ${isOnline ? 'btn-accent' : ''}`}
+              onClick={() => emitFood(item, activeGrams)}
+            >
+              + {buttonLabel}
+            </button>
+          </div>
+        </div>
+
+        {/* Unit-first Household Serving Quick-Picks + Editable Weight */}
+        {isExpanded && (
+          <div className="serving-picker-drawer">
+            <div className="serving-chips-row" role="group" aria-label={`Serving sizes for ${item.name}`}>
+              {servings.map((srv) => {
+                const isActive = Math.round(activeGrams) === Math.round(srv.grams);
+                return (
+                  <button
+                    key={`${srv.label}-${srv.grams}`}
+                    type="button"
+                    className={`chip ${isActive ? 'chip-active' : ''}`}
+                    style={{ padding: '3px 8px', fontSize: '0.7rem' }}
+                    onClick={() =>
+                      setGramsByItemId((prev) => ({ ...prev, [item.id]: srv.grams }))
+                    }
+                  >
+                    {srv.label} <span className="mono">({formatFoodAmount(srv.grams, units)})</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 7, flexWrap: 'wrap' }}>
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                <label
+                  htmlFor={`fp-amt-${item.id}`}
+                  style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--ink-secondary)' }}
+                >
+                  Amount ({foodUnit}):
+                </label>
+                <NumericInput
+                  id={`fp-amt-${item.id}`}
+                  aria-label={`${item.name} amount`}
+                  className="input mono"
+                  style={{ width: 72, padding: '4px 7px', fontSize: '0.78rem', fontWeight: 700 }}
+                  min={foodUnit === 'g' ? 1 : 0.1}
+                  max={foodUnit === 'g' ? 2000 : 120}
+                  step={foodUnit === 'g' ? 1 : 0.1}
+                  fallback={gramsToFoodDisplay(item.defaultGrams || 100, units)}
+                  value={gramsToFoodDisplay(activeGrams, units)}
+                  onChange={(val) =>
+                    setGramsByItemId((prev) => ({
+                      ...prev,
+                      [item.id]: Math.max(1, foodDisplayToGrams(val, units)),
+                    }))
+                  }
+                />
+              </div>
+              <div className="mono" style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--ink-primary)' }}>
+                <span style={{ color: 'var(--macro-carb)' }}>{prevC}g C</span> ·{' '}
+                <span style={{ color: 'var(--macro-protein)' }}>{prevP}g P</span> ·{' '}
+                <span style={{ color: 'var(--macro-fat)' }}>{prevF}g F</span> · {prevKcal} kcal
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       {/* Primary Barcode-First CTA */}
@@ -104,6 +254,32 @@ export default function FoodPickerPanel({ onAddIngredient, buttonLabel = 'Add', 
       >
         <ScanBarcode size={16} /> Scan Barcode → Enter Amount ({foodUnit})
       </button>
+
+      {/* Recent Foods 1-Tap Strip (remembers last-used portion) */}
+      {recentFoods.length > 0 && !query.trim() && (
+        <div>
+          <div className="section-kicker" style={{ marginBottom: 5, display: 'flex', alignItems: 'center', gap: 4 }}>
+            <Clock size={11} /> Recent Foods (1-tap)
+          </div>
+          <div className="recent-foods-strip" role="group" aria-label="Recent foods">
+            {recentFoods.map((rf) => (
+              <button
+                key={rf.id}
+                type="button"
+                className="chip"
+                style={{ whiteSpace: 'nowrap', fontSize: '0.72rem', padding: '4px 9px' }}
+                onClick={() => emitFood(rf, rf.defaultGrams)}
+                title={`Log ${rf.name} (${formatFoodAmount(rf.defaultGrams, units)})`}
+              >
+                + {rf.name}{' '}
+                <span className="mono" style={{ opacity: 0.72 }}>
+                  ({formatFoodAmount(rf.defaultGrams, units)})
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Search + Custom bar */}
       <div style={{ display: 'flex', gap: 6 }}>
@@ -136,8 +312,37 @@ export default function FoodPickerPanel({ onAddIngredient, buttonLabel = 'Add', 
         </div>
       </div>
 
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-        {query.trim().length >= 2 && (
+      {/* Filter Pills: All · Whole Foods · Packaged */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+        <div className="chip-row" role="group" aria-label="Food type filter">
+          {[
+            { id: 'all', label: 'All' },
+            { id: 'whole', label: 'Whole Foods' },
+            { id: 'packaged', label: 'Packaged' },
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              className={`chip ${foodFilter === tab.id ? 'chip-active' : ''}`}
+              style={{ padding: '3px 9px', fontSize: '0.7rem' }}
+              onClick={() => setFoodFilter(tab.id)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        <button
+          type="button"
+          className="btn btn-sm"
+          onClick={() => setShowCustom((v) => !v)}
+        >
+          <Plus size={13} /> {showCustom ? 'Close Custom Food' : 'Write Custom Food'}
+        </button>
+      </div>
+
+      {query.trim().length >= 2 && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           <button
             type="button"
             className="btn btn-sm btn-soft"
@@ -149,15 +354,8 @@ export default function FoodPickerPanel({ onAddIngredient, buttonLabel = 'Add', 
               ? 'Searching USDA & Brands…'
               : `Search USDA & brands for "${query.trim()}"`}
           </button>
-        )}
-        <button
-          type="button"
-          className="btn btn-sm"
-          onClick={() => setShowCustom((v) => !v)}
-        >
-          <Plus size={13} /> {showCustom ? 'Close Custom Food' : 'Write Custom Food'}
-        </button>
-      </div>
+        </div>
+      )}
 
       {/* Free-form Custom Food entry (div, not form, so it never nests inside parent meal forms) */}
       {showCustom && (
@@ -181,15 +379,15 @@ export default function FoodPickerPanel({ onAddIngredient, buttonLabel = 'Add', 
             </div>
             <div className="field">
               <label htmlFor="cf-g">Your Usual Amount ({foodUnit})</label>
-              <input
+              <NumericInput
                 id="cf-g"
-                type="number"
-                step={foodUnit === 'g' ? '1' : '0.1'}
+                step={foodUnit === 'g' ? 1 : 0.1}
                 className="input mono"
                 value={customAmount}
-                onChange={(e) => setCustomAmount(e.target.value)}
+                onChange={setCustomAmount}
                 min={0.1}
                 max={1500}
+                fallback={foodUnit === 'g' ? 100 : 3.5}
               />
             </div>
             <div className="field">
@@ -207,38 +405,44 @@ export default function FoodPickerPanel({ onAddIngredient, buttonLabel = 'Add', 
             </div>
             <div className="field">
               <label htmlFor="cf-c">Carbs / 100g</label>
-              <input
+              <NumericInput
                 id="cf-c"
-                type="number"
-                step="0.1"
+                step={0.1}
                 className="input mono"
                 placeholder="0"
+                min={0}
+                max={100}
+                allowEmpty
                 value={customCarbs}
-                onChange={(e) => setCustomCarbs(e.target.value)}
+                onChange={setCustomCarbs}
               />
             </div>
             <div className="field">
               <label htmlFor="cf-p">Protein / 100g</label>
-              <input
+              <NumericInput
                 id="cf-p"
-                type="number"
-                step="0.1"
+                step={0.1}
                 className="input mono"
                 placeholder="0"
+                min={0}
+                max={100}
+                allowEmpty
                 value={customProt}
-                onChange={(e) => setCustomProt(e.target.value)}
+                onChange={setCustomProt}
               />
             </div>
             <div className="field full">
               <label htmlFor="cf-f">Fat / 100g</label>
-              <input
+              <NumericInput
                 id="cf-f"
-                type="number"
-                step="0.1"
+                step={0.1}
                 className="input mono"
                 placeholder="0"
+                min={0}
+                max={100}
+                allowEmpty
                 value={customFat}
-                onChange={(e) => setCustomFat(e.target.value)}
+                onChange={setCustomFat}
               />
             </div>
           </div>
@@ -261,50 +465,13 @@ export default function FoodPickerPanel({ onAddIngredient, buttonLabel = 'Add', 
         </div>
       )}
 
-      {onlineResults.length > 0 && (
+      {filteredOnlineResults.length > 0 && (
         <div>
           <div className="section-kicker" style={{ marginBottom: 6 }}>
-            Online Database ({onlineSources.length > 0 ? onlineSources.join(' + ') : 'USDA + Brands'}) · {onlineResults.length} found
+            Online Database ({onlineSources.length > 0 ? onlineSources.join(' + ') : 'USDA + Brands'}) · {filteredOnlineResults.length} found
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxHeight: 240, overflowY: 'auto' }}>
-            {onlineResults.map((item) => (
-              <div
-                key={item.id}
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  gap: 8,
-                  padding: '7px 10px',
-                  borderRadius: 10,
-                  background: 'var(--bg-canvas)',
-                }}
-              >
-                <div style={{ minWidth: 0, flex: 1 }}>
-                  <div style={{ fontWeight: 700, fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
-                    <span>{item.name}</span>
-                    {item.source && (
-                      <span
-                        className="carb-badge low"
-                        style={{ fontSize: '0.58rem', padding: '1px 6px', fontWeight: 700 }}
-                      >
-                        {item.source}
-                      </span>
-                    )}
-                  </div>
-                  <div className="mono" style={{ fontSize: '0.7rem', color: 'var(--ink-muted)', marginTop: 2 }}>
-                    /100g: {item.per100g.carbs}C · {item.per100g.protein}P · {item.per100g.fat}F · serving {formatFoodAmount(item.defaultGrams, units)}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  className="btn btn-sm btn-accent"
-                  onClick={() => emitFood(item)}
-                >
-                  + {buttonLabel}
-                </button>
-              </div>
-            ))}
+            {filteredOnlineResults.map((item) => renderFoodRow(item, true))}
           </div>
         </div>
       )}
@@ -312,14 +479,18 @@ export default function FoodPickerPanel({ onAddIngredient, buttonLabel = 'Add', 
       {/* Built-in Verified Whole Foods & Popular Brands */}
       <div>
         <div className="section-kicker" style={{ marginBottom: 6 }}>
-          {query.trim() ? 'Instant Matches (USDA + Popular Brands)' : 'Quick-Pick Whole Foods (USDA)'}
+          {query.trim()
+            ? 'Instant Matches (USDA + Popular Brands)'
+            : foodFilter === 'packaged'
+            ? 'Popular Grocery & Cycling Brands'
+            : 'Quick-Pick Whole Foods (USDA)'}
         </div>
         <div
           style={{
             display: 'flex',
             flexDirection: 'column',
             gap: 5,
-            maxHeight: 210,
+            maxHeight: 230,
             overflowY: 'auto',
           }}
         >
@@ -329,34 +500,7 @@ export default function FoodPickerPanel({ onAddIngredient, buttonLabel = 'Add', 
               <strong>Write Custom Food</strong>.
             </div>
           ) : (
-            localResults.map((item) => (
-              <div
-                key={item.id}
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  gap: 8,
-                  padding: '7px 10px',
-                  borderRadius: 10,
-                  background: 'var(--bg-canvas)',
-                }}
-              >
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontWeight: 700, fontSize: '0.8rem' }}>{item.name}</div>
-                  <div className="mono" style={{ fontSize: '0.7rem', color: 'var(--ink-muted)' }}>
-                    /100g: {item.per100g.carbs}C · {item.per100g.protein}P · {item.per100g.fat}F · default {formatFoodAmount(item.defaultGrams, units)}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  className="btn btn-sm"
-                  onClick={() => emitFood(item)}
-                >
-                  + {buttonLabel}
-                </button>
-              </div>
-            ))
+            localResults.map((item) => renderFoodRow(item, false))
           )}
         </div>
       </div>

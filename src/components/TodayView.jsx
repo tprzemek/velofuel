@@ -26,18 +26,237 @@ import {
   Plus,
   X,
   RotateCcw,
+  Copy,
+  Package,
+  ChevronDown,
+  ChevronUp,
+  Scissors,
+  Thermometer,
+  Clock,
 } from 'lucide-react';
 import {
   BOTTLE_SIZE_OPTIONS,
+  buildRideEatingSchedule,
+  computeIntraDayEnergyCurve,
+  HEAT_LEVEL_OPTIONS,
   INTENSITY_OPTIONS,
   normalizeSportKind,
   SPORT_OPTIONS,
   suggestMealForSlot,
   sumDailyLogs,
+  SWEAT_RATE_OPTIONS,
 } from '../engine/fuelingEngine';
-import { formatFoodAmount, formatLiquid, formatSodiumPractical } from '../engine/units';
+import { getFoodServings } from '../engine/foodDatabase';
+import {
+  foodDisplayToGrams,
+  foodUnitLabel,
+  formatFoodAmount,
+  formatLiquid,
+  formatSodiumPractical,
+  gramsToFoodDisplay,
+} from '../engine/units';
 import NumericInput from './NumericInput';
 import BarcodeScannerModal from './BarcodeScannerModal';
+
+const MICRO_TIPS = {
+  iron: {
+    tip: 'Pair iron-rich foods with Vitamin C (citrus, berries, peppers) for better absorption, and space coffee/tea or calcium ~1 hour apart.',
+    sources: 'lean beef, rolled oats, spinach, lentils, or your daily supplement stack',
+  },
+  vitC: {
+    tip: 'Vitamin C boosts plant-iron absorption and supports immune recovery after heavy training blocks.',
+    sources: 'oranges, orange juice, strawberries, broccoli, or bell peppers',
+  },
+  calcium: {
+    tip: 'Steady daily calcium supports bone density for cyclists — aim for 2–3 dairy or fortified plant-milk servings.',
+    sources: 'Greek yogurt, milk, skyr, parmesan, tofu, or fortified oat/soy milk',
+  },
+  vitD: {
+    tip: 'Vitamin D absorbs best alongside a meal containing a little healthy fat (eggs, salmon, olive oil, or nuts).',
+    sources: 'salmon, eggs, fortified milk, or your Vitamin D supplement',
+  },
+  magnesium: {
+    tip: 'Magnesium supports muscle relaxation, sleep quality, and energy metabolism during high-volume weeks.',
+    sources: 'oats, almonds, chia/flax seeds, spinach, peanut butter, or evening magnesium',
+  },
+  sodium: {
+    tip: 'On sweaty rides, sodium helps retain fluid and prevent cramping — adjust your ride card Conditions & Sweat Rate for exact bottle dosing.',
+    sources: 'ride bottle salt/sodium citrate, electrolyte tabs, bread, cottage cheese, or tomato sauce',
+  },
+  fiber: {
+    tip: 'Keep fiber lighter right before hard rides or races for a calm stomach, and enjoy higher fiber on rest and recovery days.',
+    sources: 'oats, berries, whole-grain bread, lentils, chickpeas, and vegetables',
+  },
+};
+
+function FuelWaveCard({ plan, logs }) {
+  const curve = computeIntraDayEnergyCurve(plan, logs);
+  const pts = curve.points || [];
+  if (pts.length < 2) return null;
+
+  const width = 440;
+  const height = 122;
+  const padL = 14;
+  const padR = 14;
+  const padT = 14;
+  const padB = 22;
+  const plotW = width - padL - padR;
+  const plotH = height - padT - padB;
+
+  const allVals = pts.flatMap((p) => [
+    p.plannedBalance,
+    p.hour <= curve.lastLoggedHour ? p.loggedBalance : 0,
+    curve.balancedBand.min,
+    curve.balancedBand.max,
+  ]);
+  const minVal = Math.min(...allVals, -500) - 80;
+  const maxVal = Math.max(...allVals, 450) + 80;
+  const range = Math.max(400, maxVal - minVal);
+
+  const xAtHour = (h) => padL + ((h - 6) / 16) * plotW;
+  const yAtVal = (v) => padT + ((maxVal - v) / range) * plotH;
+
+  const plannedPath = pts
+    .map((p, idx) => `${idx === 0 ? 'M' : 'L'} ${xAtHour(p.hour).toFixed(1)} ${yAtVal(p.plannedBalance).toFixed(1)}`)
+    .join(' ');
+
+  const loggedPts = curve.hasLoggedAny
+    ? pts.filter((p) => p.hour <= curve.lastLoggedHour)
+    : pts.slice(0, 2);
+  const loggedPath = loggedPts
+    .map((p, idx) => `${idx === 0 ? 'M' : 'L'} ${xAtHour(p.hour).toFixed(1)} ${yAtVal(p.loggedBalance).toFixed(1)}`)
+    .join(' ');
+  const lastLoggedPt = loggedPts[loggedPts.length - 1];
+
+  const bandTop = yAtVal(curve.balancedBand.max);
+  const bandBottom = yAtVal(curve.balancedBand.min);
+  const zeroY = yAtVal(0);
+
+  return (
+    <section className="card fuel-wave-card" aria-label="Intra-Day Fuel Wave">
+      <div className="section-header" style={{ marginBottom: 4, flexWrap: 'wrap', gap: 6 }}>
+        <div>
+          <h2 className="section-title" style={{ fontSize: '0.9rem' }}>Today&apos;s Fuel Wave</h2>
+          <span className="section-kicker">Energy balance synced to your timeline</span>
+        </div>
+        <span className={`carb-badge ${curve.statusTone === 'med' ? 'med' : curve.statusTone === 'high' ? 'high' : 'low'}`}>
+          {curve.status}
+        </span>
+      </div>
+
+      <div className="chart-wrap" style={{ marginTop: 4 }}>
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          width="100%"
+          height="122"
+          role="img"
+          aria-label="Today's intra-day fuel balance wave"
+        >
+          {/* Shaded Balanced Band */}
+          <rect
+            x={padL}
+            y={bandTop}
+            width={plotW}
+            height={Math.max(4, bandBottom - bandTop)}
+            rx="6"
+            fill="rgba(20, 122, 83, 0.08)"
+          />
+          <line
+            x1={padL}
+            x2={width - padR}
+            y1={zeroY}
+            y2={zeroY}
+            stroke="rgba(20, 24, 28, 0.14)"
+            strokeDasharray="3 3"
+          />
+
+          {/* Planned Trajectory (Dashed) */}
+          <path
+            d={plannedPath}
+            fill="none"
+            stroke="#515A64"
+            strokeWidth="2"
+            strokeDasharray="5 4"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+
+          {/* Logged Progress (Solid) */}
+          <path
+            d={loggedPath}
+            fill="none"
+            stroke="#147A53"
+            strokeWidth="2.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+
+          {/* Workout Dip Markers */}
+          {curve.markers
+            .filter((m) => m.type === 'workout')
+            .map((m, idx) => {
+              const pt = pts.find((p) => p.hour === m.hour);
+              if (!pt) return null;
+              return (
+                <circle
+                  key={`wk-${m.hour}-${idx}`}
+                  cx={xAtHour(m.hour)}
+                  cy={yAtVal(pt.plannedBalance)}
+                  r="4"
+                  fill="#B86B14"
+                  stroke="#FFFFFF"
+                  strokeWidth="1.5"
+                >
+                  <title>{`${m.label} (~${pt.label})`}</title>
+                </circle>
+              );
+            })}
+
+          {lastLoggedPt && (
+            <circle
+              cx={xAtHour(lastLoggedPt.hour)}
+              cy={yAtVal(lastLoggedPt.loggedBalance)}
+              r="4.2"
+              fill="#147A53"
+              stroke="#FFFFFF"
+              strokeWidth="1.8"
+            />
+          )}
+
+          {/* Hour axis labels */}
+          {[6, 10, 14, 18, 22].map((h) => {
+            const lbl = h === 12 ? '12p' : h > 12 ? `${h - 12}p` : `${h}a`;
+            return (
+              <text
+                key={h}
+                x={xAtHour(h)}
+                y={height - 4}
+                textAnchor={h === 6 ? 'start' : h === 22 ? 'end' : 'middle'}
+                fontSize="9.5"
+                fill="#7D8690"
+                fontFamily="JetBrains Mono, monospace"
+              >
+                {lbl}
+              </text>
+            );
+          })}
+        </svg>
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: '0.68rem', color: 'var(--ink-muted)', marginTop: 2 }}>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <span style={{ color: 'var(--code-high)', fontWeight: 700 }}>— Logged</span>
+          <span>┄ Planned</span>
+          <span style={{ color: 'var(--code-med)', fontWeight: 700 }}>● Workout</span>
+        </div>
+        <span>Shaded = steady zone</span>
+      </div>
+      <p className="muted-text" style={{ fontSize: '0.73rem', marginTop: 4 }}>
+        {curve.summaryNote}
+      </p>
+    </section>
+  );
+}
 
 function CalorieRing({ eaten, target }) {
   const ratio = Math.min(1, Math.max(0, eaten / Math.max(target, 1)));
@@ -111,6 +330,7 @@ export default function TodayView({
   units,
   usdaApiKey = '',
   logs,
+  yesterdayMealLogs = [],
   staples = [],
   supplements = [],
   biometricsSummary,
@@ -126,11 +346,16 @@ export default function TodayView({
   onSaveSlotAsStaple,
   onLogDailyStack,
   onSetRideBottleSize,
+  onUpdateSessionFuelSettings,
   onReorderTimeline,
   onDeleteMealSlot,
   onAddMealSlot,
   onResetDayMeals,
   onDeleteLog,
+  onUpdateLog,
+  onSplitStapleLog,
+  onCopyYesterdayMeal,
+  onCopyYesterdayDay,
   onLogOnBike,
   onSaveOnBikeLog,
   onCompleteRide,
@@ -191,6 +416,180 @@ export default function TodayView({
   const [dragOverSlot, setDragOverSlot] = useState(null);
   const dragSourceRef = useRef(null);
   const dragTargetRef = useRef(null);
+
+  // v11: Inline edit state for logged foods / saved meals / quick adds
+  const [editingLogId, setEditingLogId] = useState(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [editGrams, setEditGrams] = useState(100);
+  const [editCarbs, setEditCarbs] = useState(0);
+  const [editProtein, setEditProtein] = useState(0);
+  const [editFat, setEditFat] = useState(0);
+  const [editKcal, setEditKcal] = useState(0);
+  const [editStapleBase, setEditStapleBase] = useState(null);
+
+  // v11: DIY Bottle Mix units ('grams' | 'spoons') & collapsible Pack Your Ride state
+  const [diyUnits, setDiyUnits] = useState('grams');
+  const [openPackSlot, setOpenPackSlot] = useState(null);
+  const [packBySlot, setPackBySlot] = useState({});
+
+  // v11: Tap-to-inspect micronutrient contributors
+  const [selectedMicroKey, setSelectedMicroKey] = useState(null);
+
+  const foodUnit = foodUnitLabel(units);
+
+  const openInlineLogEditor = (entry) => {
+    if (editingLogId === entry.id) {
+      setEditingLogId(null);
+      return;
+    }
+    setEditingLogId(entry.id);
+    setEditTitle(entry.title || '');
+    setEditGrams(Math.max(1, Math.round(Number(entry.ingredient?.grams) || 100)));
+    setEditCarbs(Math.max(0, Math.round(Number(entry.carbs) || 0)));
+    setEditProtein(Math.max(0, Math.round(Number(entry.protein) || 0)));
+    setEditFat(Math.max(0, Math.round(Number(entry.fat) || 0)));
+    setEditKcal(Math.max(0, Math.round(Number(entry.kcal) || 0)));
+    setEditStapleBase(
+      entry.type === 'staple'
+        ? {
+            carbs: entry.carbs || 0,
+            protein: entry.protein || 0,
+            fat: entry.fat || 0,
+            micros: { ...(entry.micros || {}) },
+          }
+        : null
+    );
+  };
+
+  const handleEditMacroChange = (field, rawVal) => {
+    const prevVal = field === 'c' ? editCarbs : field === 'p' ? editProtein : editFat;
+    const nextC = field === 'c' ? rawVal : editCarbs;
+    const nextP = field === 'p' ? rawVal : editProtein;
+    const nextF = field === 'f' ? rawVal : editFat;
+    if (field === 'c') setEditCarbs(rawVal);
+    if (field === 'p') setEditProtein(rawVal);
+    if (field === 'f') setEditFat(rawVal);
+    if (Number(prevVal) !== Number(rawVal)) {
+      const cNum = Math.max(0, Math.round(Number(nextC) || 0));
+      const pNum = Math.max(0, Math.round(Number(nextP) || 0));
+      const fNum = Math.max(0, Math.round(Number(nextF) || 0));
+      setEditKcal(cNum * 4 + pNum * 4 + fNum * 9);
+    }
+  };
+
+  const handleSaveInlineLogEdit = (entry) => {
+    if (!onUpdateLog) return;
+    if (entry.ingredient) {
+      const grams = Math.max(1, Math.round(Number(editGrams) || 1));
+      const f = grams / 100;
+      const p = entry.ingredient.per100g || {};
+      const carbs = Math.round((p.carbs || 0) * f);
+      const protein = Math.round((p.protein || 0) * f);
+      const fat = Math.round((p.fat || 0) * f);
+      const kcal = carbs * 4 + protein * 4 + fat * 9;
+      onUpdateLog(entry.id, {
+        detail: formatFoodAmount(grams, units),
+        ingredient: { ...entry.ingredient, grams },
+        carbs,
+        protein,
+        fat,
+        kcal,
+        micros: {
+          fiber: Number(((p.fiber || 0) * f).toFixed(1)),
+          iron: Number(((p.iron || 0) * f).toFixed(1)),
+          vitC: Math.round((p.vitC || 0) * f),
+          calcium: Math.round((p.calcium || 0) * f),
+          vitD: Number(((p.vitD || 0) * f).toFixed(1)),
+          magnesium: Math.round((p.magnesium || 0) * f),
+          sodium: Math.round((p.sodium || 0) * f),
+        },
+      });
+    } else if (entry.type === 'staple') {
+      const c = Math.max(0, Math.round(Number(editCarbs) || 0));
+      const p = Math.max(0, Math.round(Number(editProtein) || 0));
+      const f = Math.max(0, Math.round(Number(editFat) || 0));
+      const kcal = c * 4 + p * 4 + f * 9;
+      const baseKcal = editStapleBase
+        ? editStapleBase.carbs * 4 + editStapleBase.protein * 4 + editStapleBase.fat * 9
+        : entry.kcal || 0;
+      const ratio = baseKcal > 10 ? kcal / baseKcal : 1;
+      const baseM = editStapleBase?.micros || entry.micros || {};
+      const baseItems =
+        Array.isArray(entry.resolvedItems) && entry.resolvedItems.length > 0
+          ? entry.resolvedItems
+          : null;
+      const scaledResolvedItems = baseItems
+        ? baseItems.map((ri) => ({
+            ...ri,
+            grams: Math.max(1, Math.round((Number(ri.grams) || 50) * ratio)),
+          }))
+        : undefined;
+      const updatedDetail = scaledResolvedItems
+        ? scaledResolvedItems.map((i) => `${formatFoodAmount(i.grams, units)} ${i.name}`).join(' · ')
+        : Math.abs(ratio - 1) >= 0.03
+        ? `Adjusted portion (${Number(ratio.toFixed(2))}×)`
+        : entry.detail;
+      onUpdateLog(entry.id, {
+        detail: updatedDetail,
+        ...(scaledResolvedItems ? { resolvedItems: scaledResolvedItems } : {}),
+        carbs: c,
+        protein: p,
+        fat: f,
+        kcal,
+        micros: {
+          fiber: Number(((baseM.fiber || 0) * ratio).toFixed(1)),
+          iron: Number(((baseM.iron || 0) * ratio).toFixed(1)),
+          vitC: Math.round((baseM.vitC || 0) * ratio),
+          calcium: Math.round((baseM.calcium || 0) * ratio),
+          vitD: Number(((baseM.vitD || 0) * ratio).toFixed(1)),
+          magnesium: Math.round((baseM.magnesium || 0) * ratio),
+          sodium: Math.round((baseM.sodium || 0) * ratio),
+        },
+      });
+    } else {
+      const c = Math.max(0, Math.round(Number(editCarbs) || 0));
+      const p = Math.max(0, Math.round(Number(editProtein) || 0));
+      const f = Math.max(0, Math.round(Number(editFat) || 0));
+      const kcal = Math.max(0, Math.round(Number(editKcal) || 0));
+      onUpdateLog(entry.id, {
+        title: editTitle.trim() || entry.title,
+        carbs: c,
+        protein: p,
+        fat: f,
+        kcal,
+      });
+    }
+    setEditingLogId(null);
+  };
+
+  const getPackForSlot = (slotId, wPlan) => {
+    const existing = packBySlot[slotId];
+    if (existing) return existing;
+    return {
+      carbBottles: wPlan?.bottles || 1,
+      gels: 0,
+      bars: 0,
+      tabs: 0,
+    };
+  };
+
+  const updatePackCount = (slotId, wPlan, field, delta) => {
+    setPackBySlot((prev) => {
+      const cur = prev[slotId] || {
+        carbBottles: wPlan?.bottles || 1,
+        gels: 0,
+        bars: 0,
+        tabs: 0,
+      };
+      return {
+        ...prev,
+        [slotId]: {
+          ...cur,
+          [field]: Math.max(0, Math.min(12, (cur[field] || 0) + delta)),
+        },
+      };
+    });
+  };
 
   const totals = sumDailyLogs(logs);
   const remaining = {
@@ -533,6 +932,9 @@ export default function TodayView({
         </div>
       </section>
 
+      {/* Live Intra-Day Fuel Wave Curve (compact SVG card, NOT a .meal-slot) */}
+      <FuelWaveCard plan={plan} logs={logs} />
+
       {/* Water Weight Notice from Withings Scale */}
       {biometricsSummary.glycogenNotice && (
         <div className="notice-strip">
@@ -580,6 +982,17 @@ export default function TodayView({
             </span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+            {yesterdayMealLogs.length > 0 && onCopyYesterdayDay && (
+              <button
+                type="button"
+                className="btn btn-sm btn-soft"
+                style={{ padding: '4px 8px', fontSize: '0.7rem' }}
+                onClick={onCopyYesterdayDay}
+                title="Copy yesterday's meals & snacks (never copies workouts)"
+              >
+                <Copy size={12} /> Copy Yesterday&apos;s Meals
+              </button>
+            )}
             {isDayCustomized && onResetDayMeals && (
               <button
                 type="button"
@@ -1341,10 +1754,407 @@ export default function TodayView({
                           </div>
                         </div>
 
+                        {/* v11: Live Conditions / Heat & Sweat Rate Controls */}
+                        <div style={{ marginTop: 9, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--ink-secondary)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                              <Thermometer size={12} /> Conditions &amp; Sweat:
+                            </span>
+                            <span className="mono" style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--code-high)' }}>
+                              {formatLiquid(wPlan.fluidMlPerHr, units)}/h · {wPlan.sodiumMgPerHr}mg Na/h
+                            </span>
+                          </div>
+                          <div className="chip-row" role="group" aria-label="Ride conditions">
+                            {HEAT_LEVEL_OPTIONS.map((opt) => {
+                              const active = wPlan.heatLevel === opt.value;
+                              return (
+                                <button
+                                  key={opt.value}
+                                  type="button"
+                                  className={`chip ${active ? 'chip-active' : ''}`}
+                                  style={{ padding: '3px 8px', fontSize: '0.69rem' }}
+                                  onClick={() =>
+                                    onUpdateSessionFuelSettings?.(plan.date, workout.id, { heatLevel: opt.value })
+                                  }
+                                >
+                                  {opt.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: '0.69rem', fontWeight: 700, color: 'var(--ink-muted)' }}>
+                              Sweat rate:
+                            </span>
+                            <div className="chip-row" role="group" aria-label="Ride sweat rate">
+                              {SWEAT_RATE_OPTIONS.map((opt) => {
+                                const active = wPlan.sweatRate === opt.value;
+                                return (
+                                  <button
+                                    key={opt.value}
+                                    type="button"
+                                    className={`chip ${active ? 'chip-active' : ''}`}
+                                    style={{ padding: '2px 8px', fontSize: '0.68rem' }}
+                                    onClick={() =>
+                                      onUpdateSessionFuelSettings?.(plan.date, workout.id, { sweatRate: opt.value })
+                                    }
+                                  >
+                                    {opt.label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* v11: DIY Bottle Mix Studio (Table Sugar vs Malto+Fructose, Table Salt vs Sodium Citrate, Grams <-> Spoons) */}
+                        {wPlan.diyRecipe && (
+                          <div className="diy-mix-box">
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: '0.73rem', fontWeight: 800, color: 'var(--ink-primary)' }}>
+                                DIY Bottle Mix · per {wPlan.bottleLabel}
+                              </span>
+                              <button
+                                type="button"
+                                className="chip mono"
+                                style={{ padding: '2px 8px', fontSize: '0.66rem', fontWeight: 700 }}
+                                onClick={() => setDiyUnits((u) => (u === 'grams' ? 'spoons' : 'grams'))}
+                              >
+                                {diyUnits === 'grams' ? 'Switch to Spoons' : 'Switch to Grams'}
+                              </button>
+                            </div>
+
+                            <div className="diy-mix-recipe mono">
+                              {wPlan.carbsPerBottle > 0 ? (
+                                <div>
+                                  •{' '}
+                                  {wPlan.carbBase === 'malto_fructose' ? (
+                                    diyUnits === 'spoons' ? (
+                                      <>
+                                        <strong>{wPlan.diyRecipe.maltoSpoons}</strong> malto +{' '}
+                                        <strong>{wPlan.diyRecipe.fructoseSpoons}</strong> fructose (2:1)
+                                      </>
+                                    ) : (
+                                      <>
+                                        <strong>{wPlan.diyRecipe.maltoG}g</strong> malto +{' '}
+                                        <strong>{wPlan.diyRecipe.fructoseG}g</strong> fructose (2:1)
+                                      </>
+                                    )
+                                  ) : diyUnits === 'spoons' ? (
+                                    <>
+                                      <strong>{wPlan.diyRecipe.sugarSpoons}</strong> table sugar ({wPlan.carbsPerBottle}g C)
+                                    </>
+                                  ) : (
+                                    <>
+                                      <strong>{wPlan.diyRecipe.sugarG}g</strong> table sugar (1:1)
+                                    </>
+                                  )}
+                                </div>
+                              ) : (
+                                <div>• Plain water (no carbs needed for short easy spin)</div>
+                              )}
+                              <div>
+                                •{' '}
+                                {wPlan.saltSource === 'sodium_citrate' ? (
+                                  diyUnits === 'spoons' ? (
+                                    <>
+                                      <strong>{wPlan.diyRecipe.sodiumCitrateSpoons}</strong> sodium citrate ({wPlan.sodiumPerBottleMg}mg Na)
+                                    </>
+                                  ) : (
+                                    <>
+                                      <strong>{wPlan.diyRecipe.sodiumCitrateG}g</strong> sodium citrate ({wPlan.sodiumPerBottleMg}mg Na)
+                                    </>
+                                  )
+                                ) : diyUnits === 'spoons' ? (
+                                  <>
+                                    <strong>{wPlan.diyRecipe.tableSaltSpoons}</strong> table salt ({wPlan.sodiumPerBottleMg}mg Na)
+                                  </>
+                                ) : (
+                                  <>
+                                    <strong>{wPlan.diyRecipe.tableSaltG}g</strong> table salt ({wPlan.sodiumPerBottleMg}mg Na)
+                                  </>
+                                )}
+                              </div>
+                            </div>
+
+                            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 6 }}>
+                              <div className="chip-row" role="group" aria-label="Carb mix base">
+                                <button
+                                  type="button"
+                                  className={`chip ${wPlan.carbBase === 'sugar' ? 'chip-active' : ''}`}
+                                  style={{ padding: '2px 7px', fontSize: '0.66rem' }}
+                                  onClick={() =>
+                                    onUpdateSessionFuelSettings?.(plan.date, workout.id, { carbBase: 'sugar' })
+                                  }
+                                >
+                                  Table Sugar
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`chip ${wPlan.carbBase === 'malto_fructose' ? 'chip-active' : ''}`}
+                                  style={{ padding: '2px 7px', fontSize: '0.66rem' }}
+                                  onClick={() =>
+                                    onUpdateSessionFuelSettings?.(plan.date, workout.id, { carbBase: 'malto_fructose' })
+                                  }
+                                >
+                                  Malto + Fructose
+                                </button>
+                              </div>
+                              <div className="chip-row" role="group" aria-label="Sodium source">
+                                <button
+                                  type="button"
+                                  className={`chip ${wPlan.saltSource === 'table_salt' ? 'chip-active' : ''}`}
+                                  style={{ padding: '2px 7px', fontSize: '0.66rem' }}
+                                  onClick={() =>
+                                    onUpdateSessionFuelSettings?.(plan.date, workout.id, { saltSource: 'table_salt' })
+                                  }
+                                >
+                                  Table Salt
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`chip ${wPlan.saltSource === 'sodium_citrate' ? 'chip-active' : ''}`}
+                                  style={{ padding: '2px 7px', fontSize: '0.66rem' }}
+                                  onClick={() =>
+                                    onUpdateSessionFuelSettings?.(plan.date, workout.id, { saltSource: 'sodium_citrate' })
+                                  }
+                                >
+                                  Sodium Citrate
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="muted-text" style={{ fontSize: '0.68rem', marginTop: 5 }}>
+                              {wPlan.diyRecipe.saltNote}
+                              {wPlan.carbBase === 'sugar' && wPlan.diyRecipe.highCarbHint && (
+                                <div style={{ color: 'var(--code-med)', fontWeight: 600, marginTop: 2 }}>
+                                  {wPlan.diyRecipe.highCarbHint}
+                                </div>
+                              )}
+                              {wPlan.saltSource === 'table_salt' && wPlan.diyRecipe.highSaltHint && (
+                                <div style={{ color: 'var(--code-med)', fontWeight: 600, marginTop: 2 }}>
+                                  {wPlan.diyRecipe.highSaltHint}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
                         <p className="muted-text" style={{ marginTop: 8, fontSize: '0.75rem' }}>
                           <Droplets size={12} style={{ verticalAlign: '-2px', marginRight: 4 }} />
                           {wPlan.note}
                         </p>
+
+                        {/* v11: Collapsible "Pack Your Ride" Itemized Fuel Builder + Hourly Eating Schedule */}
+                        {(() => {
+                          const packKey = `${plan.date}:${workout.id || slot.slot}`;
+                          const packOpen = openPackSlot === packKey;
+                          const pack = getPackForSlot(packKey, wPlan);
+                          const tabMg = profile?.electrolyteTabMg || 500;
+                          const packedCarbs =
+                            pack.carbBottles * (wPlan.carbsPerBottle || 0) +
+                            pack.gels * 25 +
+                            pack.bars * 40;
+                          const packedProtein = pack.bars * 5;
+                          const packedFat = pack.bars * 5;
+                          const packedFluidMl = pack.carbBottles * (wPlan.bottleSizeMl || 650);
+                          const packedSodiumMg =
+                            pack.carbBottles * (wPlan.sodiumPerBottleMg || 0) +
+                            pack.gels * 50 +
+                            pack.bars * 150 +
+                            pack.tabs * tabMg;
+                          const isHardRide = ['sweetspot', 'threshold', 'vo2max', 'race'].includes(workout.intensity);
+                          const highSolidFatWarn =
+                            (isHardRide && (packedFat >= 10 || packedProtein >= 10)) ||
+                            packedFat >= 15 ||
+                            packedProtein >= 15;
+                          const schedule = packOpen
+                            ? buildRideEatingSchedule(workout.durationMin, pack, wPlan)
+                            : [];
+
+                          return (
+                            <div style={{ marginTop: 8 }}>
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-soft"
+                                style={{ width: '100%', justifyContent: 'space-between' }}
+                                aria-expanded={packOpen}
+                                onClick={() => setOpenPackSlot(packOpen ? null : packKey)}
+                              >
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                                  <Package size={13} /> Pack Your Ride &amp; Eating Schedule
+                                </span>
+                                {packOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                              </button>
+
+                              {packOpen && (
+                                <div className="ride-pack-drawer">
+                                  {/* Live Progress vs Ride Targets */}
+                                  <div className="pack-progress-grid">
+                                    <div className="pack-progress-row">
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', fontWeight: 700 }}>
+                                        <span>Carbs</span>
+                                        <span className="mono">{packedCarbs} / {wPlan.totalCarbs}g</span>
+                                      </div>
+                                      <div className="progress-track light" style={{ height: 5 }}>
+                                        <div
+                                          className="progress-fill"
+                                          style={{
+                                            width: `${pct(packedCarbs, Math.max(1, wPlan.totalCarbs))}%`,
+                                            background: 'var(--macro-carb)',
+                                          }}
+                                        />
+                                      </div>
+                                    </div>
+                                    <div className="pack-progress-row">
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', fontWeight: 700 }}>
+                                        <span>Fluid</span>
+                                        <span className="mono">
+                                          {formatLiquid(packedFluidMl, units)} / {formatLiquid(wPlan.totalFluidMl, units)}
+                                        </span>
+                                      </div>
+                                      <div className="progress-track light" style={{ height: 5 }}>
+                                        <div
+                                          className="progress-fill"
+                                          style={{
+                                            width: `${pct(packedFluidMl, Math.max(1, wPlan.totalFluidMl))}%`,
+                                            background: 'var(--macro-protein)',
+                                          }}
+                                        />
+                                      </div>
+                                    </div>
+                                    <div className="pack-progress-row">
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', fontWeight: 700 }}>
+                                        <span>Sodium</span>
+                                        <span className="mono">{packedSodiumMg} / {wPlan.totalSodiumMg}mg</span>
+                                      </div>
+                                      <div className="progress-track light" style={{ height: 5 }}>
+                                        <div
+                                          className="progress-fill"
+                                          style={{
+                                            width: `${pct(packedSodiumMg, Math.max(1, wPlan.totalSodiumMg))}%`,
+                                            background: 'var(--code-med)',
+                                          }}
+                                        />
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* Natural-Unit Steppers */}
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 9 }}>
+                                    {[
+                                      {
+                                        key: 'carbBottles',
+                                        label: `Carb Bottles (${wPlan.bottleLabel})`,
+                                        sub: `${wPlan.carbsPerBottle}g C · ${wPlan.sodiumPerBottleMg}mg Na each`,
+                                      },
+                                      {
+                                        key: 'gels',
+                                        label: 'Energy Gels',
+                                        sub: '25g C · 50mg Na each',
+                                      },
+                                      {
+                                        key: 'bars',
+                                        label: 'Bars / Rice Cakes',
+                                        sub: '40g C · 5g P · 5g F · 150mg Na',
+                                      },
+                                      {
+                                        key: 'tabs',
+                                        label: 'Electrolyte Tabs',
+                                        sub: `${tabMg}mg Na each`,
+                                      },
+                                    ].map((item) => (
+                                      <div key={item.key} className="pack-stepper-row">
+                                        <div style={{ minWidth: 0 }}>
+                                          <div style={{ fontWeight: 700, fontSize: '0.76rem' }}>{item.label}</div>
+                                          <div className="mono" style={{ fontSize: '0.67rem', color: 'var(--ink-muted)' }}>
+                                            {item.sub}
+                                          </div>
+                                        </div>
+                                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                                          <button
+                                            type="button"
+                                            className="reorder-btn"
+                                            aria-label={`Remove 1 ${item.label}`}
+                                            disabled={pack[item.key] <= 0}
+                                            onClick={() => updatePackCount(packKey, wPlan, item.key, -1)}
+                                          >
+                                            −
+                                          </button>
+                                          <span className="mono" style={{ minWidth: 18, textAlign: 'center', fontWeight: 800, fontSize: '0.82rem' }}>
+                                            {pack[item.key]}
+                                          </span>
+                                          <button
+                                            type="button"
+                                            className="reorder-btn"
+                                            aria-label={`Add 1 ${item.label}`}
+                                            onClick={() => updatePackCount(packKey, wPlan, item.key, 1)}
+                                          >
+                                            +
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+
+                                  {highSolidFatWarn && (
+                                    <div className="notice-strip" style={{ marginTop: 8, padding: '7px 9px', fontSize: '0.71rem' }}>
+                                      <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+                                      <span>
+                                        Higher fat/protein ({packedFat}g F · {packedProtein}g P) can slow stomach emptying during hard efforts — save bars for steady endurance miles.
+                                      </span>
+                                    </div>
+                                  )}
+
+                                  {/* Deterministic Ride Eating Schedule */}
+                                  <div className="ride-schedule-box">
+                                    <div style={{ fontSize: '0.7rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--ink-secondary)', marginBottom: 5, display: 'flex', alignItems: 'center', gap: 4 }}>
+                                      <Clock size={12} /> Ride Eating Schedule ({workout.durationMin}m)
+                                    </div>
+                                    <ul className="ride-schedule-list">
+                                      {schedule.map((cue, cIdx) => (
+                                        <li key={`${cue.timeLabel}-${cIdx}`}>
+                                          <span className="mono" style={{ fontWeight: 800, color: 'var(--code-high)', minWidth: 56 }}>
+                                            {cue.timeLabel}
+                                          </span>
+                                          <span>{cue.text}</span>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    className="btn btn-sm btn-accent btn-block"
+                                    style={{ marginTop: 9 }}
+                                    onClick={() => {
+                                      const summaryParts = [];
+                                      if (pack.carbBottles > 0) summaryParts.push(`${pack.carbBottles} bottle${pack.carbBottles > 1 ? 's' : ''}`);
+                                      if (pack.gels > 0) summaryParts.push(`${pack.gels} gel${pack.gels > 1 ? 's' : ''}`);
+                                      if (pack.bars > 0) summaryParts.push(`${pack.bars} bar${pack.bars > 1 ? 's' : ''}`);
+                                      if (pack.tabs > 0) summaryParts.push(`${pack.tabs} tab${pack.tabs > 1 ? 's' : ''}`);
+                                      onSaveOnBikeLog({
+                                        existingId: existingWorkoutFuelLog?.id || null,
+                                        slotId: slot.slot,
+                                        carbs: packedCarbs,
+                                        protein: packedProtein,
+                                        fat: packedFat,
+                                        sodiumMg: packedSodiumMg,
+                                        bottles: pack.carbBottles,
+                                        bottleLabel: wPlan.bottleLabel,
+                                        scannedItems: summaryParts.length ? [`Pack: ${summaryParts.join(' + ')}`] : [],
+                                        durationMin: workout.durationMin,
+                                        plannedCarbs: wPlan.totalCarbs,
+                                      });
+                                    }}
+                                  >
+                                    <Zap size={13} /> Log Pack as Actual Ride Fuel ({packedCarbs}g C)
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
 
                         {workout.isPrimaryWorkout && (plan.timingCoaching?.preRideCue || plan.timingCoaching?.postRideCue) && (
                           <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border-hairline)', display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -1428,53 +2238,296 @@ export default function TodayView({
                 {/* Logged Items (ONLY rendered once the user actually logs food/fuel) */}
                 {slotLogs.length > 0 && (
                   <div className="meal-entries">
-                    {slotLogs.map((entry) => (
-                      <div className="logged-item" key={entry.id}>
-                        <div style={{ minWidth: 0, flex: 1 }}>
-                          <div className="logged-item-title">
-                            {entry.title}{' '}
-                            {entry.uncertaintyPct > 0 && (
-                              <span className="est-tag mono">±{entry.uncertaintyPct}% est</span>
-                            )}
+                    {slotLogs.map((entry) => {
+                      const isEditingThis = !isWorkout && editingLogId === entry.id;
+                      const foodServings = entry.ingredient ? getFoodServings(entry.ingredient) : [];
+                      const ingPreview = entry.ingredient
+                        ? (() => {
+                            const f = (Number(editGrams) || 0) / 100;
+                            const p = entry.ingredient.per100g || {};
+                            const c = Math.round((p.carbs || 0) * f);
+                            const pr = Math.round((p.protein || 0) * f);
+                            const fa = Math.round((p.fat || 0) * f);
+                            return { c, p: pr, f: fa, kcal: c * 4 + pr * 4 + fa * 9 };
+                          })()
+                        : null;
+                      const manualPreviewKcal =
+                        Math.max(0, Math.round(Number(editCarbs) || 0)) * 4 +
+                        Math.max(0, Math.round(Number(editProtein) || 0)) * 4 +
+                        Math.max(0, Math.round(Number(editFat) || 0)) * 9;
+
+                      return (
+                        <div className="logged-item-wrap" key={entry.id}>
+                          <div className="logged-item">
+                            <div style={{ minWidth: 0, flex: 1 }}>
+                              <div className="logged-item-title">
+                                {entry.title}{' '}
+                                {entry.uncertaintyPct > 0 && (
+                                  <span className="est-tag mono">±{entry.uncertaintyPct}% est</span>
+                                )}
+                              </div>
+                              <div className="logged-item-detail">{entry.detail}</div>
+                              <div className="logged-item-macros mono">
+                                <span style={{ color: 'var(--macro-carb)' }}>{entry.carbs}g C</span>
+                                {(!isWorkout || entry.protein > 0) && (
+                                  <span style={{ color: 'var(--macro-protein)' }}>{entry.protein}g P</span>
+                                )}
+                                {(!isWorkout || entry.fat > 0) && (
+                                  <span style={{ color: 'var(--macro-fat)' }}>{entry.fat}g F</span>
+                                )}
+                                <span style={{ color: 'var(--ink-muted)' }}>{entry.kcal} kcal</span>
+                                {isWorkout && entry.micros?.sodium > 0 && (
+                                  <span style={{ color: 'var(--ink-secondary)' }}>{entry.micros.sodium}mg Na</span>
+                                )}
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                              {isWorkout && wPlan && entry.type === 'on_bike' && (
+                                <button
+                                  type="button"
+                                  className="icon-btn"
+                                  onClick={() => openOnBikeEditor(slot, entry)}
+                                  aria-label="Edit actual ride fuel"
+                                  title="Modify actual carbs, protein, fat, or sodium consumed"
+                                >
+                                  <Pencil size={14} />
+                                </button>
+                              )}
+                              {!isWorkout && onUpdateLog && (
+                                <button
+                                  type="button"
+                                  className="icon-btn"
+                                  onClick={() => openInlineLogEditor(entry)}
+                                  aria-label={`Edit ${entry.title}`}
+                                  title="Edit amount or macros"
+                                >
+                                  <Pencil size={14} />
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                className="icon-btn"
+                                onClick={() => onDeleteLog(entry.id)}
+                                aria-label={`Remove ${entry.title}`}
+                              >
+                                <Trash2 size={15} />
+                              </button>
+                            </div>
                           </div>
-                          <div className="logged-item-detail">{entry.detail}</div>
-                          <div className="logged-item-macros mono">
-                            <span style={{ color: 'var(--macro-carb)' }}>{entry.carbs}g C</span>
-                            {(!isWorkout || entry.protein > 0) && (
-                              <span style={{ color: 'var(--macro-protein)' }}>{entry.protein}g P</span>
-                            )}
-                            {(!isWorkout || entry.fat > 0) && (
-                              <span style={{ color: 'var(--macro-fat)' }}>{entry.fat}g F</span>
-                            )}
-                            <span style={{ color: 'var(--ink-muted)' }}>{entry.kcal} kcal</span>
-                            {isWorkout && entry.micros?.sodium > 0 && (
-                              <span style={{ color: 'var(--ink-secondary)' }}>{entry.micros.sodium}mg Na</span>
-                            )}
-                          </div>
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                          {isWorkout && wPlan && entry.type === 'on_bike' && (
-                            <button
-                              type="button"
-                              className="icon-btn"
-                              onClick={() => openOnBikeEditor(slot, entry)}
-                              aria-label="Edit actual ride fuel"
-                              title="Modify actual carbs, protein, fat, or sodium consumed"
-                            >
-                              <Pencil size={14} />
-                            </button>
+
+                          {/* v11: Compact Inline Log Editor (div, NEVER nested form) */}
+                          {isEditingThis && (
+                            <div className="inline-log-editor" role="region" aria-label={`Editing ${entry.title}`}>
+                              {entry.ingredient ? (
+                                <>
+                                  {foodServings.length > 0 && (
+                                    <div className="serving-chips-row" style={{ marginBottom: 7 }}>
+                                      {foodServings.map((srv) => (
+                                        <button
+                                          key={`${srv.label}-${srv.grams}`}
+                                          type="button"
+                                          className={`chip ${Math.round(editGrams) === Math.round(srv.grams) ? 'chip-active' : ''}`}
+                                          style={{ padding: '2px 8px', fontSize: '0.68rem' }}
+                                          onClick={() => setEditGrams(srv.grams)}
+                                        >
+                                          {srv.label} ({formatFoodAmount(srv.grams, units)})
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
+                                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+                                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                                      <label
+                                        htmlFor={`edit-amt-${entry.id}`}
+                                        style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--ink-secondary)' }}
+                                      >
+                                        Amount ({foodUnit})
+                                      </label>
+                                      <NumericInput
+                                        id={`edit-amt-${entry.id}`}
+                                        className="input mono"
+                                        style={{ width: 78, padding: '5px 8px', fontSize: '0.82rem', fontWeight: 700 }}
+                                        min={foodUnit === 'g' ? 1 : 0.1}
+                                        max={foodUnit === 'g' ? 2500 : 120}
+                                        step={foodUnit === 'g' ? 1 : 0.1}
+                                        fallback={gramsToFoodDisplay(entry.ingredient.grams || 100, units)}
+                                        value={gramsToFoodDisplay(editGrams, units)}
+                                        onChange={(v) => setEditGrams(Math.max(1, foodDisplayToGrams(v, units)))}
+                                      />
+                                    </div>
+                                    {ingPreview && (
+                                      <div className="mono" style={{ fontSize: '0.72rem', fontWeight: 700 }}>
+                                        <span style={{ color: 'var(--macro-carb)' }}>{ingPreview.c}g C</span> ·{' '}
+                                        <span style={{ color: 'var(--macro-protein)' }}>{ingPreview.p}g P</span> ·{' '}
+                                        <span style={{ color: 'var(--macro-fat)' }}>{ingPreview.f}g F</span> · {ingPreview.kcal} kcal
+                                      </div>
+                                    )}
+                                  </div>
+                                </>
+                              ) : entry.type === 'staple' ? (
+                                <>
+                                  <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--ink-secondary)', marginBottom: 5 }}>
+                                    Quick portion scale:
+                                  </div>
+                                  <div className="chip-row" style={{ marginBottom: 8 }}>
+                                    {[0.5, 0.75, 1, 1.25, 1.5].map((mult) => (
+                                      <button
+                                        key={mult}
+                                        type="button"
+                                        className="chip mono"
+                                        style={{ padding: '2px 8px', fontSize: '0.7rem' }}
+                                        onClick={() => {
+                                          if (!editStapleBase) return;
+                                          setEditCarbs(Math.round(editStapleBase.carbs * mult));
+                                          setEditProtein(Math.round(editStapleBase.protein * mult));
+                                          setEditFat(Math.round(editStapleBase.fat * mult));
+                                        }}
+                                      >
+                                        {mult}×
+                                      </button>
+                                    ))}
+                                  </div>
+                                  <div className="quick-add-macro-row">
+                                    <div className="field">
+                                      <label htmlFor={`edit-c-${entry.id}`}>Carbs (g)</label>
+                                      <NumericInput
+                                        id={`edit-c-${entry.id}`}
+                                        className="input mono"
+                                        min={0}
+                                        max={600}
+                                        fallback={0}
+                                        value={editCarbs}
+                                        onChange={setEditCarbs}
+                                      />
+                                    </div>
+                                    <div className="field">
+                                      <label htmlFor={`edit-p-${entry.id}`}>Protein (g)</label>
+                                      <NumericInput
+                                        id={`edit-p-${entry.id}`}
+                                        className="input mono"
+                                        min={0}
+                                        max={300}
+                                        fallback={0}
+                                        value={editProtein}
+                                        onChange={setEditProtein}
+                                      />
+                                    </div>
+                                    <div className="field">
+                                      <label htmlFor={`edit-f-${entry.id}`}>Fat (g)</label>
+                                      <NumericInput
+                                        id={`edit-f-${entry.id}`}
+                                        className="input mono"
+                                        min={0}
+                                        max={250}
+                                        fallback={0}
+                                        value={editFat}
+                                        onChange={setEditFat}
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="mono" style={{ fontSize: '0.71rem', color: 'var(--ink-muted)', marginTop: 5 }}>
+                                    Updated total: <strong>{manualPreviewKcal} kcal</strong>
+                                  </div>
+                                  {onSplitStapleLog && (
+                                    <button
+                                      type="button"
+                                      className="btn btn-sm btn-soft btn-block"
+                                      style={{ marginTop: 7 }}
+                                      onClick={() => {
+                                        onSplitStapleLog(entry.id, manualPreviewKcal);
+                                        setEditingLogId(null);
+                                      }}
+                                    >
+                                      <Scissors size={13} /> Split into individual foods
+                                    </button>
+                                  )}
+                                </>
+                              ) : (
+                                <>
+                                  <div className="field" style={{ marginBottom: 7 }}>
+                                    <label htmlFor={`edit-title-${entry.id}`}>Title</label>
+                                    <input
+                                      id={`edit-title-${entry.id}`}
+                                      className="input"
+                                      value={editTitle}
+                                      onChange={(e) => setEditTitle(e.target.value)}
+                                    />
+                                  </div>
+                                  <div className="quick-add-macro-row">
+                                    <div className="field">
+                                      <label htmlFor={`edit-c-${entry.id}`}>Carbs (g)</label>
+                                      <NumericInput
+                                        id={`edit-c-${entry.id}`}
+                                        className="input mono"
+                                        min={0}
+                                        max={600}
+                                        fallback={0}
+                                        value={editCarbs}
+                                        onChange={(v) => handleEditMacroChange('c', v)}
+                                      />
+                                    </div>
+                                    <div className="field">
+                                      <label htmlFor={`edit-p-${entry.id}`}>Protein (g)</label>
+                                      <NumericInput
+                                        id={`edit-p-${entry.id}`}
+                                        className="input mono"
+                                        min={0}
+                                        max={300}
+                                        fallback={0}
+                                        value={editProtein}
+                                        onChange={(v) => handleEditMacroChange('p', v)}
+                                      />
+                                    </div>
+                                    <div className="field">
+                                      <label htmlFor={`edit-f-${entry.id}`}>Fat (g)</label>
+                                      <NumericInput
+                                        id={`edit-f-${entry.id}`}
+                                        className="input mono"
+                                        min={0}
+                                        max={250}
+                                        fallback={0}
+                                        value={editFat}
+                                        onChange={(v) => handleEditMacroChange('f', v)}
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="field" style={{ marginTop: 7 }}>
+                                    <label htmlFor={`edit-kcal-${entry.id}`}>Calories (kcal)</label>
+                                    <NumericInput
+                                      id={`edit-kcal-${entry.id}`}
+                                      className="input mono"
+                                      min={0}
+                                      max={5000}
+                                      fallback={0}
+                                      value={editKcal}
+                                      onChange={setEditKcal}
+                                    />
+                                  </div>
+                                </>
+                              )}
+
+                              <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                                <button
+                                  type="button"
+                                  className="btn btn-sm btn-primary"
+                                  style={{ flex: 1 }}
+                                  onClick={() => handleSaveInlineLogEdit(entry)}
+                                >
+                                  Save Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn btn-sm"
+                                  onClick={() => setEditingLogId(null)}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
                           )}
-                          <button
-                            type="button"
-                            className="icon-btn"
-                            onClick={() => onDeleteLog(entry.id)}
-                            aria-label={`Remove ${entry.title}`}
-                          >
-                            <Trash2 size={15} />
-                          </button>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
 
@@ -1753,6 +2806,17 @@ export default function TodayView({
                       >
                         <Camera size={14} /> Work Meal
                       </button>
+                      {slotLogs.length === 0 &&
+                        onCopyYesterdayMeal &&
+                        yesterdayMealLogs.some((l) => l.slot === slot.slot) && (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-soft"
+                            onClick={() => onCopyYesterdayMeal(slot.slot, slot.label)}
+                          >
+                            <Copy size={13} /> Repeat Yesterday
+                          </button>
+                        )}
                     </>
                   )}
                 </div>
@@ -1790,7 +2854,10 @@ export default function TodayView({
       {/* Key Endurance Vitamins, Minerals, Practical Sodium & Supplements */}
       <section className="card" aria-label="Key Vitamins and Minerals">
         <div className="section-header">
-          <h2 className="section-title">Key Vitamins &amp; Minerals</h2>
+          <div>
+            <h2 className="section-title">Key Vitamins &amp; Minerals</h2>
+            <span className="section-kicker">Tap any nutrient to inspect today&apos;s sources</span>
+          </div>
           <button
             type="button"
             className="btn btn-sm btn-soft"
@@ -1803,8 +2870,15 @@ export default function TodayView({
         <div className="micro-grid">
           {microsList.map((m) => {
             const p = pct(m.val, m.target);
+            const isSelected = selectedMicroKey === m.key;
             return (
-              <div className="micro-item" key={m.key}>
+              <button
+                type="button"
+                className={`micro-item micro-item-btn ${isSelected ? 'selected' : ''}`}
+                key={m.key}
+                aria-pressed={isSelected}
+                onClick={() => setSelectedMicroKey(isSelected ? null : m.key)}
+              >
                 <div className="micro-name">{m.label}</div>
                 <div className="micro-val mono">
                   {m.val}
@@ -1821,10 +2895,72 @@ export default function TodayView({
                     }}
                   />
                 </div>
-              </div>
+              </button>
             );
           })}
         </div>
+
+        {/* v11: Tap-to-Inspect Micronutrient Contributors Drawer */}
+        {selectedMicroKey && (() => {
+          const activeMicro = microsList.find((m) => m.key === selectedMicroKey);
+          if (!activeMicro) return null;
+          const tipMeta = MICRO_TIPS[activeMicro.key];
+          const contributors = logs
+            .map((entry) => ({
+              id: entry.id,
+              title: entry.title,
+              type: entry.type,
+              amount: Number(entry.micros?.[activeMicro.key] || 0),
+            }))
+            .filter((c) => c.amount > 0)
+            .sort((a, b) => b.amount - a.amount);
+
+          return (
+            <div className="micro-drawer" role="region" aria-label={`${activeMicro.label} contributors`}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                <strong style={{ fontSize: '0.78rem' }}>
+                  Where today&apos;s {activeMicro.label} came from
+                </strong>
+                <button
+                  type="button"
+                  className="icon-btn"
+                  aria-label="Close nutrient breakdown"
+                  onClick={() => setSelectedMicroKey(null)}
+                >
+                  <X size={14} />
+                </button>
+              </div>
+              {contributors.length > 0 ? (
+                <ul className="micro-contributor-list">
+                  {contributors.map((c) => (
+                    <li key={c.id}>
+                      <span>
+                        {c.title}
+                        {c.type === 'supplement' && (
+                          <span style={{ fontSize: '0.66rem', color: 'var(--code-high)', marginLeft: 5, fontWeight: 700 }}>
+                            Supplement
+                          </span>
+                        )}
+                      </span>
+                      <span className="mono" style={{ fontWeight: 700 }}>
+                        {Number(c.amount.toFixed(1))} {activeMicro.unit}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="muted-text" style={{ fontSize: '0.73rem' }}>
+                  Nothing logged yet — top quick sources: {tipMeta?.sources || 'whole foods or your daily stack'}.
+                </p>
+              )}
+              {tipMeta?.tip && (
+                <p className="muted-text" style={{ fontSize: '0.71rem', marginTop: 6, color: 'var(--code-high)' }}>
+                  <strong>Pairing tip:</strong> {tipMeta.tip}
+                </p>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Practical Sodium Helper (Table Salt / Electrolyte Tabs) */}
         <div

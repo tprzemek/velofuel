@@ -3,6 +3,7 @@ import { Scale, Upload, TrendingDown, ShieldCheck, Activity, Check } from 'lucid
 import { getIsoDate } from '../engine/defaultData';
 import { parseWithingsCsv } from '../engine/biometricsEngine';
 import { displayToKg, formatWeight, formatWeightRate, kgToDisplay } from '../engine/units';
+import NumericInput from './NumericInput';
 
 function WeightTrendChart({ series, units }) {
   if (!series || series.length < 2) {
@@ -85,6 +86,7 @@ export default function BodyView({
   profile,
   units,
   biometricsSummary,
+  weeklyCheckIn = null,
   onUpdateProfile,
   onAddBiometric,
   onImportBiometrics,
@@ -92,14 +94,14 @@ export default function BodyView({
 }) {
   const weightUnit = units?.weight || 'kg';
   const [date, setDate] = useState(getIsoDate(0));
-  const [weightInput, setWeightInput] = useState(String(kgToDisplay(biometricsSummary.latestWeightKg, units)));
-  const [bfInput, setBfInput] = useState(String(biometricsSummary.latestBodyFatPct));
+  const [weightInput, setWeightInput] = useState(kgToDisplay(biometricsSummary.latestWeightKg, units));
+  const [bfInput, setBfInput] = useState(biometricsSummary.latestBodyFatPct);
   const csvRef = useRef(null);
 
   const handleLogMorning = (e) => {
     e.preventDefault();
-    const rawW = parseFloat(weightInput);
-    const bf = parseFloat(bfInput);
+    const rawW = Number(weightInput);
+    const bf = bfInput === '' || bfInput == null ? NaN : Number(bfInput);
     const weightKg = displayToKg(rawW, units);
     if (Number.isNaN(weightKg) || weightKg < 35 || weightKg > 180) return;
     onAddBiometric({
@@ -269,41 +271,114 @@ export default function BodyView({
         <WeightTrendChart series={biometricsSummary.series} units={units} />
       </section>
 
-      {/* Daily Burn Auto-Check */}
-      {biometricsSummary.tdeeSuggestion && (
-        <section className="card">
-          <div className="section-header">
+      {/* Intake-Aware Smart Weekly Calorie Check-In */}
+      {weeklyCheckIn && (
+        <section className="card" aria-label="Weekly Calorie Check-In">
+          <div className="section-header" style={{ flexWrap: 'wrap', gap: 6 }}>
             <h2 className="section-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              {biometricsSummary.tdeeSuggestion.type === 'ontrack' ? (
+              {weeklyCheckIn.status === 'on_track' ? (
                 <ShieldCheck size={16} color="var(--code-high)" />
               ) : (
                 <TrendingDown size={16} color="var(--code-med)" />
               )}
-              Daily Burn Auto-Check
+              Weekly Calorie Check-In
             </h2>
-            <span className="section-kicker mono">
-              Adjust {profile.tdeeAdjustmentKcal >= 0 ? '+' : ''}{profile.tdeeAdjustmentKcal} kcal
+            <span
+              className={`carb-badge ${
+                weeklyCheckIn.status === 'on_track'
+                  ? 'high'
+                  : weeklyCheckIn.status === 'ready'
+                  ? 'med'
+                  : 'low'
+              }`}
+            >
+              {weeklyCheckIn.statusLabel}
             </span>
           </div>
-          <p className="muted-text" style={{ marginBottom: 4, fontSize: '0.73rem', opacity: 0.85 }}>
-            Compares your real scale trend against your weekly goal and nudges your daily calorie budget if needed.
+
+          <p className="muted-text" style={{ fontSize: '0.73rem', marginBottom: 10 }}>
+            Compares what you actually logged against your 7-day weight trend — no guilt on high days, and skipped or partial days are ignored automatically.
           </p>
-          <p className="muted-text">{biometricsSummary.tdeeSuggestion.message}</p>
-          {biometricsSummary.tdeeSuggestion.deltaKcal !== 0 && (
-            <button
-              type="button"
-              className="btn btn-sm btn-primary"
-              style={{ marginTop: 10 }}
-              onClick={() => {
-                onUpdateProfile({
-                  tdeeAdjustmentKcal: (profile.tdeeAdjustmentKcal || 0) + biometricsSummary.tdeeSuggestion.deltaKcal,
-                });
-                showToast(`Adjusted daily calorie budget by ${biometricsSummary.tdeeSuggestion.deltaKcal > 0 ? '+' : ''}${biometricsSummary.tdeeSuggestion.deltaKcal} kcal`);
-              }}
-            >
-              <Check size={14} /> Apply {biometricsSummary.tdeeSuggestion.deltaKcal > 0 ? '+' : ''}
-              {biometricsSummary.tdeeSuggestion.deltaKcal} kcal Adjustment
-            </button>
+
+          <div className="on-bike-grid" style={{ marginBottom: 10 }}>
+            <div className="mini-stat">
+              <div className="mini-stat-label">Avg Logged</div>
+              <div className="mini-stat-val mono">
+                {weeklyCheckIn.avgLoggedKcal != null ? `${weeklyCheckIn.avgLoggedKcal.toLocaleString()} kcal` : '—'}
+              </div>
+            </div>
+            <div className="mini-stat">
+              <div className="mini-stat-label">7-Day Weight Trend</div>
+              <div className="mini-stat-val mono">
+                {formatWeightRate(weeklyCheckIn.weeklyRateKg, units)}
+              </div>
+            </div>
+            <div className="mini-stat">
+              <div className="mini-stat-label">Estimated Daily Burn</div>
+              <div className="mini-stat-val mono">
+                {weeklyCheckIn.estimatedDailyBurn != null ? `${weeklyCheckIn.estimatedDailyBurn.toLocaleString()} kcal` : '—'}
+              </div>
+            </div>
+          </div>
+
+          <p className="muted-text">{weeklyCheckIn.message}</p>
+
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: 6,
+              marginTop: 8,
+              fontSize: '0.7rem',
+              color: 'var(--ink-muted)',
+            }}
+            className="mono"
+          >
+            <span>
+              {weeklyCheckIn.completeDays} complete food day{weeklyCheckIn.completeDays === 1 ? '' : 's'}
+              {weeklyCheckIn.partialDaysSkipped > 0
+                ? ` · ${weeklyCheckIn.partialDaysSkipped} partial day${weeklyCheckIn.partialDaysSkipped === 1 ? '' : 's'} skipped`
+                : ''}
+            </span>
+            <span>
+              Budget offset: {profile.tdeeAdjustmentKcal >= 0 ? '+' : ''}
+              {profile.tdeeAdjustmentKcal || 0} kcal
+              {profile.lastCheckInDate ? ` · Checked ${profile.lastCheckInDate.slice(5)}` : ''}
+            </span>
+          </div>
+
+          {weeklyCheckIn.suggestedAdjustmentKcal !== 0 && (
+            <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className="btn btn-sm btn-primary"
+                onClick={() => {
+                  const delta = weeklyCheckIn.suggestedAdjustmentKcal;
+                  onUpdateProfile({
+                    tdeeAdjustmentKcal: (profile.tdeeAdjustmentKcal || 0) + delta,
+                    lastCheckInDate: getIsoDate(0),
+                  });
+                  showToast(
+                    `Updated daily calorie budget by ${delta > 0 ? '+' : ''}${delta} kcal/day`
+                  );
+                }}
+              >
+                <Check size={14} /> Apply {weeklyCheckIn.suggestedAdjustmentKcal > 0 ? '+' : ''}
+                {weeklyCheckIn.suggestedAdjustmentKcal} kcal/day
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => {
+                  onUpdateProfile({ lastCheckInDate: getIsoDate(0) });
+                  showToast('Kept your current daily calorie budget.');
+                }}
+              >
+                Keep Current Budget
+              </button>
+            </div>
           )}
         </section>
       )}
@@ -324,24 +399,28 @@ export default function BodyView({
             </div>
             <div className="field">
               <label htmlFor="bio-weight">Weight ({weightUnit})</label>
-              <input
+              <NumericInput
                 id="bio-weight"
-                type="number"
-                step="0.1"
+                step={0.1}
+                min={weightUnit === 'lbs' ? 75 : 35}
+                max={weightUnit === 'lbs' ? 400 : 180}
+                fallback={kgToDisplay(biometricsSummary.latestWeightKg, units)}
                 className="input mono"
                 value={weightInput}
-                onChange={(e) => setWeightInput(e.target.value)}
+                onChange={setWeightInput}
               />
             </div>
             <div className="field">
               <label htmlFor="bio-bf">Body Fat % (optional)</label>
-              <input
+              <NumericInput
                 id="bio-bf"
-                type="number"
-                step="0.1"
+                step={0.1}
+                min={3}
+                max={55}
+                allowEmpty
                 className="input mono"
                 value={bfInput}
-                onChange={(e) => setBfInput(e.target.value)}
+                onChange={setBfInput}
               />
             </div>
           </div>

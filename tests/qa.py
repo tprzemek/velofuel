@@ -357,6 +357,332 @@ def run_qa():
             assert icu_ride.get_by_text("1150 kJ").is_visible()
             print("PASS 9: Multi-workout day (Completed Gym + Scheduled Ride) verified via both UI and Intervals.icu sync")
 
+            # Switch back to Metric for deterministic gram/kg checks in v11 passes
+            nav.get_by_role("button", name="Sync").click()
+            page.get_by_role("button", name="Metric (kg · g · ml)").click()
+            nav.get_by_role("button", name="Today").click()
+
+            # 10. v11: Live Intra-Day Fuel Wave + Serving-Size Quick-Picks + Whole/Packaged Filter + Recent Foods + 3-Sec Quick Add Macros
+            fuel_wave_svg = page.locator("svg[aria-label=\"Today's intra-day fuel balance wave\"]")
+            assert fuel_wave_svg.is_visible(), "Expected Intra-Day Fuel Wave SVG on Today tab"
+            assert page.locator(".fuel-wave-card.meal-slot").count() == 0, "Fuel Wave card MUST NOT use .meal-slot class"
+
+            page.locator(".meal-slot[data-slot='snack']").get_by_role("button", name="Scan / Type").click()
+            qf_dialog = page.get_by_role("dialog", name="Scan or Add Food")
+            # Default tab must be Find / Scan
+            assert qf_dialog.get_by_role("tab", name="Find / Scan").get_attribute("aria-selected") == "true"
+
+            # Whole Foods / Packaged filter pills
+            filter_group = qf_dialog.get_by_role("group", name="Food type filter")
+            filter_group.get_by_role("button", name="Packaged").click()
+            assert qf_dialog.get_by_text("Chobani Nonfat Plain Greek Yogurt").is_visible()
+            filter_group.get_by_role("button", name="Whole Foods").click()
+            assert qf_dialog.get_by_text("Rolled Oats (dry)").is_visible()
+            filter_group.get_by_role("button", name="All").click()
+
+            # Serving-Size quick-picks & editable NumericInput amount on Rolled Oats (dry)
+            qf_dialog.get_by_role("button", name="Choose serving for Rolled Oats (dry)").click()
+            oats_servings = qf_dialog.get_by_role("group", name="Serving sizes for Rolled Oats (dry)")
+            oats_servings.get_by_role("button", name="1 cup").click()
+            oats_amt = qf_dialog.get_by_label("Rolled Oats (dry) amount")
+            assert oats_amt.input_value() == "80", f"Expected 80g after 1 cup chip, got {oats_amt.input_value()!r}"
+            clear_and_verify_empty(oats_amt, "FoodPickerPanel serving amount")
+            oats_amt.type("80")
+            qf_dialog.locator(".food-picker-row", has_text="Rolled Oats (dry)").get_by_role("button", name="+ Log").click()
+            assert page.locator(".meal-slot[data-slot='snack']").get_by_text("Rolled Oats (dry)").is_visible()
+
+            # Re-open modal -> verify Recent Foods 1-tap strip shows Rolled Oats (dry) (80g), then test Quick Add tab
+            page.locator(".meal-slot[data-slot='snack']").get_by_role("button", name="Scan / Type").click()
+            qf_dialog = page.get_by_role("dialog", name="Scan or Add Food")
+            recent_group = qf_dialog.get_by_role("group", name="Recent foods")
+            assert recent_group.get_by_text("Rolled Oats (dry)").is_visible(), "Expected Rolled Oats in Recent Foods strip"
+
+            qf_dialog.get_by_role("tab", name="Quick Add").click()
+            check_no_jargon(page, "QuickFoodModal Quick Add tab")
+            qf_dialog.get_by_label("Label (optional)").fill("Espresso Pastry")
+            qa_c = qf_dialog.get_by_label("Carbs (g)")
+            qa_p = qf_dialog.get_by_label("Protein (g)")
+            qa_f = qf_dialog.get_by_label("Fat (g)")
+            qa_c.type("45")
+            clear_and_verify_empty(qa_c, "Quick Add Carbs")
+            qa_c.type("45")
+            qa_p.type("8")
+            clear_and_verify_empty(qa_p, "Quick Add Protein")
+            qa_p.type("8")
+            qa_f.type("12")
+            clear_and_verify_empty(qa_f, "Quick Add Fat")
+            qa_f.type("12")
+            qf_dialog.get_by_role("button", name="Log Quick Add (320 kcal)").click()
+            assert page.locator(".meal-slot[data-slot='snack']").get_by_text("Espresso Pastry").is_visible()
+            print("PASS 10: Fuel Wave SVG, Serving-Size Quick-Picks, Whole/Packaged Filter, Recent Foods, and Quick Add Macros")
+
+            # 11. v11: 1-Tap Inline Edit on Logged Food & Saved Meal + Split Saved Meal into Individual Foods
+            snack_card = page.locator(".meal-slot[data-slot='snack']")
+            snack_card.get_by_role("button", name="Edit Rolled Oats (dry)").click()
+            oats_edit_region = snack_card.get_by_role("region", name="Editing Rolled Oats (dry)")
+            edit_amt_inp = oats_edit_region.get_by_label("Amount (g)")
+            clear_and_verify_empty(edit_amt_inp, "Inline edit food grams")
+            edit_amt_inp.type("100")
+            oats_edit_region.get_by_role("button", name="Save Edit").click()
+            assert snack_card.locator(".logged-item", has_text="Rolled Oats (dry)").get_by_text("100g").is_visible()
+            assert snack_card.locator(".logged-item", has_text="Rolled Oats (dry)").get_by_text("66g C").is_visible()
+
+            # Inline edit + Split Saved Meal on Breakfast ("Oats & Berries" logged in PASS 5)
+            # Verify 1.25× scale is preserved on Split (not dropped to 1.0×) AND Staples template is untouched
+            bf_card = page.locator(".meal-slot[data-slot='breakfast']")
+            bf_before_count = bf_card.locator(".logged-item").count()
+            bf_snapshot_before = page.evaluate(
+                """(() => {
+                    const st = JSON.parse(localStorage.getItem('velofuel_state_v1') || '{}');
+                    const d = new Date();
+                    const today = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+                    const bfLogs = (st.logsByDate?.[today] || []).filter((l) => l.slot === 'breakfast' && l.type !== 'supplement');
+                    const oatsLog = bfLogs.find((l) => l.title === 'Oats & Berries');
+                    const template = (st.staples || []).find((s) => s.name === 'Oats & Berries');
+                    return {
+                        oatsKcal: oatsLog ? oatsLog.kcal : 0,
+                        otherKcal: bfLogs.filter((l) => l.id !== oatsLog?.id).reduce((s, l) => s + (l.kcal || 0), 0),
+                        templateJson: JSON.stringify(template || null),
+                    };
+                })()"""
+            )
+            assert bf_snapshot_before["oatsKcal"] > 100, f"Expected Oats & Berries logged kcal > 100, got {bf_snapshot_before}"
+            bf_card.get_by_role("button", name="Edit Oats & Berries").click()
+            bf_edit_region = bf_card.get_by_role("region", name="Editing Oats & Berries")
+            bf_edit_region.get_by_role("button", name="1.25×").click()
+            bf_edit_region.get_by_role("button", name="Split into individual foods").click()
+            bf_after_count = bf_card.locator(".logged-item").count()
+            assert bf_after_count > bf_before_count, (
+                f"Splitting saved meal should unpack multiple foods ({bf_before_count} -> {bf_after_count})"
+            )
+            bf_snapshot_after = page.evaluate(
+                """(() => {
+                    const st = JSON.parse(localStorage.getItem('velofuel_state_v1') || '{}');
+                    const d = new Date();
+                    const today = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+                    const bfLogs = (st.logsByDate?.[today] || []).filter((l) => l.slot === 'breakfast' && l.type !== 'supplement');
+                    const template = (st.staples || []).find((s) => s.name === 'Oats & Berries');
+                    return {
+                        totalKcal: bfLogs.reduce((s, l) => s + (l.kcal || 0), 0),
+                        templateJson: JSON.stringify(template || null),
+                    };
+                })()"""
+            )
+            split_kcal = bf_snapshot_after["totalKcal"] - bf_snapshot_before["otherKcal"]
+            expected_scaled = bf_snapshot_before["oatsKcal"] * 1.25
+            assert expected_scaled * 0.9 <= split_kcal <= expected_scaled * 1.1, (
+                f"Expected 1.25x split kcal near {expected_scaled:.0f}, got {split_kcal} (orig {bf_snapshot_before['oatsKcal']})"
+            )
+            assert bf_snapshot_after["templateJson"] == bf_snapshot_before["templateJson"], (
+                "Splitting a logged Saved Meal MUST NOT mutate the Staples template!"
+            )
+
+            # Calorie-only Quick Add (425 kcal, empty C/P/F) renamed via inline edit must retain 425 kcal
+            snack_card.get_by_role("button", name="Scan / Type").click()
+            qf_dialog = page.get_by_role("dialog", name="Scan or Add Food")
+            qf_dialog.get_by_role("tab", name="Quick Add").click()
+            qf_dialog.get_by_label("Label (optional)").fill("Calorie Only Shake")
+            qf_dialog.get_by_label("Calories (kcal — auto or custom)").fill("425")
+            qf_dialog.get_by_role("button", name="Log Quick Add (425 kcal)").click()
+            assert snack_card.locator(".logged-item", has_text="Calorie Only Shake").get_by_text("425 kcal").is_visible()
+            snack_card.get_by_role("button", name="Edit Calorie Only Shake").click()
+            cal_edit_region = snack_card.get_by_role("region", name="Editing Calorie Only Shake")
+            cal_edit_region.get_by_label("Title").fill("Renamed Calorie Shake")
+            cal_edit_region.get_by_role("button", name="Save Edit").click()
+            renamed_item = snack_card.locator(".logged-item", has_text="Renamed Calorie Shake")
+            assert renamed_item.is_visible(), "Expected renamed calorie-only Quick Add"
+            assert renamed_item.get_by_text("425 kcal").is_visible(), "Renaming calorie-only Quick Add MUST retain 425 kcal!"
+
+            check_no_jargon(page, "Today after inline edit & split")
+            print("PASS 11: 1-Tap Inline Edit (grams, calorie-only Quick Add, Saved Meal 1.25× scale + Split w/ untouched Staples)")
+
+            # 12. v11: Heat/Conditions + Sweat Rate + DIY Bottle Mix Studio + Pack Your Ride + Hourly Eating Schedule
+            icu_ride = page.locator(".meal-slot.training-card", has=page.locator(".meal-slot-name", has_text="Evening Sweet Spot Ride"))
+            icu_ride.get_by_role("group", name="Ride conditions").get_by_role("button", name="Hot / Indoor").click()
+            icu_ride.get_by_role("group", name="Ride sweat rate").get_by_role("button", name="Heavy").click()
+            assert icu_ride.get_by_text("975 ml/h").is_visible() or icu_ride.get_by_text("1.0 L/h").is_visible() or icu_ride.get_by_text("1150 ml/h").is_visible()
+
+            # DIY Bottle Mix Studio toggles
+            icu_ride.get_by_role("group", name="Carb mix base").get_by_role("button", name="Malto + Fructose").click()
+            assert icu_ride.get_by_text("malto +").first.is_visible()
+            icu_ride.get_by_role("group", name="Sodium source").get_by_role("button", name="Sodium Citrate").click()
+            assert icu_ride.get_by_text("sodium citrate").first.is_visible()
+            icu_ride.get_by_role("button", name="Switch to Spoons").click()
+            assert icu_ride.get_by_text("tbsp").first.is_visible()
+            assert icu_ride.get_by_text("tsp").first.is_visible()
+            icu_ride.get_by_role("button", name="Switch to Grams").click()
+
+            # Collapsible Pack Your Ride + Eating Schedule + Log Pack as Actual Ride Fuel
+            icu_ride.get_by_role("button", name="Pack Your Ride & Eating Schedule").click()
+            icu_ride.get_by_role("button", name="Add 1 Energy Gels").click()
+            icu_ride.get_by_role("button", name="Add 1 Bars / Rice Cakes").click()
+            assert icu_ride.get_by_text("Ride Eating Schedule").is_visible()
+            assert icu_ride.get_by_text("Energy Gel #1").is_visible()
+            assert icu_ride.get_by_text("Bar / Rice Cake #1").is_visible()
+            check_no_jargon(page, "Ride Card DIY Studio & Pack Your Ride")
+            icu_ride.locator("button:has-text('Log Pack as Actual Ride Fuel')").click()
+            assert icu_ride.locator(".logged-item").count() >= 1
+            print("PASS 12: Heat/Sweat live scaling, DIY Bottle Mix Studio (Spoons/Grams, Malto, Citrate), and Pack Your Ride + Schedule")
+
+            # 13. v11: Copy Yesterday's Meals & Repeat Yesterday (Meals Only, Never Workouts) + Pack Isolation + Micro Inspector + Body Weekly Check-In
+            # Navigate to Tomorrow (where Today is "yesterday" and has logged meals + logged ride fuel + open Pack drawer!)
+            page.get_by_role("button", name="Next day").click()
+            assert page.get_by_text("Tomorrow").first.is_visible()
+
+            # Verify Today's open Pack Your Ride drawer & gel count did NOT leak onto Tomorrow's ride
+            tmrw_ride = page.locator(".meal-slot.training-card").first
+            assert tmrw_ride.locator(".ride-pack-drawer").count() == 0, "Today's Pack Your Ride drawer MUST NOT leak open onto Tomorrow!"
+            tmrw_ride.get_by_role("button", name="Pack Your Ride & Eating Schedule").click()
+            gel_row_text = tmrw_ride.locator(".pack-stepper-row", has_text="Energy Gels").inner_text()
+            assert "\n0\n" in f"\n{gel_row_text}\n" or gel_row_text.strip().endswith("0\n+") or "0" in gel_row_text.split("each")[-1], (
+                f"Tomorrow's Energy Gels count should start at 0, not Today's count; got: {gel_row_text!r}"
+            )
+            assert tmrw_ride.get_by_text("Energy Gel #1").count() == 0, "Today's Energy Gel #1 MUST NOT leak into Tomorrow's schedule!"
+            tmrw_ride.get_by_role("button", name="Pack Your Ride & Eating Schedule").click()
+
+            assert page.get_by_role("button", name="Copy Yesterday's Meals").is_visible()
+            tmrw_bf = page.locator(".meal-slot[data-slot='breakfast']")
+            assert tmrw_bf.get_by_role("button", name="Repeat Yesterday").is_visible()
+            tmrw_bf.get_by_role("button", name="Repeat Yesterday").click()
+            assert tmrw_bf.locator(".logged-item").count() >= 2, "Repeat Yesterday should copy yesterday's Breakfast items"
+
+            # Also verify Copy Yesterday's Meals copies meal items and NEVER copies workouts/on_bike fuel
+            tmrw_snack = page.locator(".meal-slot[data-slot='snack']")
+            assert tmrw_snack.locator(".logged-item").count() == 0
+            page.get_by_role("button", name="Copy Yesterday's Meals").click()
+            assert tmrw_snack.locator(".logged-item").count() >= 2
+            assert page.locator(".meal-slot.training-card .logged-item").count() == 0, "Copy Yesterday MUST NOT copy workout fuel logs!"
+
+            # Back to Today -> Tap-to-Inspect Micronutrient Contributors
+            page.get_by_role("button", name="Previous day").click()
+            page.locator(".micro-item-btn", has_text="Iron").click()
+            iron_drawer = page.get_by_role("region", name="Iron contributors")
+            assert iron_drawer.is_visible()
+            assert iron_drawer.get_by_text("Where today's Iron came from").is_visible()
+            assert iron_drawer.get_by_text("Pairing tip:").is_visible()
+            assert iron_drawer.get_by_text("Iron + Vit C (35mg)").is_visible()
+            check_no_jargon(page, "Micronutrient contributor drawer")
+
+            # Body Tab -> Weekly Calorie Check-In + Weigh-in NumericInput verification
+            nav.get_by_role("button", name="Body").click()
+            checkin_card = page.get_by_role("region", name="Weekly Calorie Check-In")
+            assert checkin_card.is_visible(), "Expected Weekly Calorie Check-In card on Body tab"
+            assert checkin_card.get_by_text("Avg Logged", exact=True).is_visible()
+            assert checkin_card.get_by_text("7-Day Weight Trend", exact=True).is_visible()
+            assert checkin_card.get_by_text("Estimated Daily Burn", exact=True).is_visible()
+            assert checkin_card.get_by_text("Building Baseline").is_visible()
+
+            bio_w = page.get_by_label("Weight (kg)")
+            clear_and_verify_empty(bio_w, "Body weigh-in Weight NumericInput")
+            bio_w.type("73.5")
+            bio_bf = page.get_by_label("Body Fat % (optional)")
+            clear_and_verify_empty(bio_bf, "Body weigh-in Body Fat NumericInput")
+            bio_bf.type("14.5")
+            check_no_jargon(page, "Body tab Weekly Calorie Check-In (Building)")
+
+            # Seed 5 complete food days + 1 partial day (<45% target) to verify intake-aware Check-In active calculation & partial-day guard
+            page.evaluate(
+                """(() => {
+                    const raw = localStorage.getItem('velofuel_state_v1');
+                    if (!raw) return;
+                    const st = JSON.parse(raw);
+                    const isoShift = (delta) => {
+                        const d = new Date();
+                        d.setDate(d.getDate() + delta);
+                        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+                    };
+                    for (let i = 1; i <= 5; i++) {
+                        const dt = isoShift(-i);
+                        st.logsByDate[dt] = [{
+                            id: `seed-full-${i}`,
+                            slot: 'lunch',
+                            type: 'quick_add',
+                            title: 'Full Day Seed',
+                            detail: 'Quick macros',
+                            carbs: 320,
+                            protein: 150,
+                            fat: 80,
+                            kcal: 2600,
+                            uncertaintyPct: 0,
+                            micros: { fiber: 28, iron: 12, vitC: 80, calcium: 900, vitD: 12, magnesium: 350, sodium: 2500 },
+                            loggedAt: '13:00'
+                        }];
+                    }
+                    // Add 1 partial day (400 kcal < 45% target) to verify partial-day skipping
+                    st.logsByDate[isoShift(-6)] = [{
+                        id: 'seed-partial-6',
+                        slot: 'breakfast',
+                        type: 'quick_add',
+                        title: 'Coffee & Toast',
+                        detail: 'Quick macros',
+                        carbs: 55,
+                        protein: 15,
+                        fat: 13,
+                        kcal: 400,
+                        uncertaintyPct: 0,
+                        micros: { fiber: 2, iron: 1, vitC: 0, calcium: 100, vitD: 0, magnesium: 20, sodium: 200 },
+                        loggedAt: '08:00'
+                    }];
+                    localStorage.setItem('velofuel_state_v1', JSON.stringify(st));
+                })()"""
+            )
+            page.reload(wait_until="networkidle")
+            nav.get_by_role("button", name="Body").click()
+            checkin_card = page.get_by_role("region", name="Weekly Calorie Check-In")
+            assert checkin_card.get_by_text("1 partial day skipped").is_visible(), "Expected partial logging day guard!"
+            assert checkin_card.get_by_text("Building Baseline").count() == 0, "Expected Check-In to unlock with 5+ complete days!"
+            keep_btn = checkin_card.get_by_role("button", name="Keep Current Budget")
+            assert keep_btn.is_visible(), "Expected Check-In action buttons when burn gap is significant!"
+            keep_btn.click()
+            assert checkin_card.get_by_text("Checked In").is_visible(), "Clicking Keep Current Budget should conclude Check-In with 'Checked In' badge!"
+            assert checkin_card.get_by_role("button", name="Keep Current Budget").count() == 0, "Keep Current Budget button should hide after check-in!"
+            assert checkin_card.locator("button:has-text('Apply ')").count() == 0, "Apply button should hide after check-in!"
+            check_no_jargon(page, "Body tab Weekly Calorie Check-In (Checked In)")
+            print("PASS 13: Copy Yesterday / Repeat Yesterday (meals only), Pack Isolation, Tap-to-Inspect Micros, and Weekly Check-In conclusion")
+
+            # 14. v11 Iteration 2 Regressions: Imperial <1 oz blur preservation & Fuel Wave timeline reorder distribution
+            nav.get_by_role("button", name="Sync").click()
+            page.get_by_role("button", name="Imperial (lbs · oz · fl oz)").click()
+            nav.get_by_role("button", name="Today").click()
+            page.locator(".meal-slot[data-slot='lunch']").get_by_role("button", name="Scan / Type").click()
+            qf_dialog = page.get_by_role("dialog", name="Scan or Add Food")
+            qf_dialog.get_by_placeholder("Search foods or brands (Chobani, Clif, oats, Maurten...)").fill("Extra Virgin Olive Oil")
+            qf_dialog.get_by_role("button", name="Choose serving for Extra Virgin Olive Oil").click()
+            oil_amt = qf_dialog.get_by_label("Extra Virgin Olive Oil amount")
+            oil_before = oil_amt.input_value()
+            assert float(oil_before) < 1.0, f"Expected Olive Oil < 1 oz in Imperial mode, got {oil_before!r}"
+            oil_amt.focus()
+            oil_amt.blur()
+            oil_after = oil_amt.input_value()
+            assert float(oil_after) < 1.0 and oil_after == oil_before, (
+                f"Imperial <1 oz blur MUST NOT clamp up to 1 oz! {oil_before!r} -> {oil_after!r}"
+            )
+            qf_dialog.get_by_role("button", name="Close").click()
+
+            # Switch back to Metric and reorder Dinner to the top of the timeline -> verify Fuel Wave distributes markers across waking hours
+            nav.get_by_role("button", name="Sync").click()
+            page.get_by_role("button", name="Metric (kg · g · ml)").click()
+            nav.get_by_role("button", name="Today").click()
+            for _ in range(8):
+                first_slot = page.locator(".meal-slot").first.get_attribute("data-slot")
+                if first_slot == "dinner":
+                    break
+                up_btn = page.locator(".meal-slot[data-slot='dinner']").get_by_role("button", name="Move Dinner up")
+                if up_btn.is_disabled():
+                    break
+                up_btn.click()
+            assert page.locator(".meal-slot").first.get_attribute("data-slot") == "dinner", "Expected Dinner moved to top of timeline"
+            wk_titles = page.locator("svg[aria-label=\"Today's intra-day fuel balance wave\"] circle title").all_text_contents()
+            assert len(wk_titles) >= 1, f"Expected workout markers in Fuel Wave SVG, got {wk_titles}"
+            assert not any("~9p" in t for t in wk_titles), (
+                f"Fuel Wave markers MUST NOT pile onto ~9p when Dinner is moved to top! Got: {wk_titles}"
+            )
+            assert len(set(t.split("(~")[-1] for t in wk_titles)) == len(wk_titles), (
+                f"Expected distinct waking hours for workout markers, got: {wk_titles}"
+            )
+            check_no_jargon(page, "PASS 14 regression checks")
+            print("PASS 14: Imperial <1 oz blur preservation & Fuel Wave timeline reorder distribution verified")
+
             browser.close()
     finally:
         server.terminate()
@@ -364,7 +690,7 @@ def run_qa():
 
     assert not console_errors, f"Console errors detected: {console_errors}"
     assert not page_errors, f"Uncaught page errors detected: {page_errors}"
-    print("ALL 9 QA SUITES PASSED (0 console errors, 0 page errors)!")
+    print("ALL 14 QA SUITES PASSED (0 console errors, 0 page errors)!")
 
 
 if __name__ == "__main__":

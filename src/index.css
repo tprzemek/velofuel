@@ -1233,3 +1233,192 @@ input[type='range'] {
 .spin {
   animation: spin 1s linear infinite;
 }
+
+/* ============================================================
+   VeloFuel v11 Additions (Pure Custom CSS matching :root tokens)
+   ============================================================ */
+
+.segmented-2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.chip-active {
+  background: var(--bg-carbon);
+  color: #FFFFFF;
+  border-color: var(--bg-carbon);
+}
+
+.chip-active:hover {
+  background: var(--bg-carbon);
+  color: #FFFFFF;
+}
+
+.recent-foods-strip {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.food-picker-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: var(--bg-canvas);
+}
+
+.serving-picker-drawer {
+  padding-top: 7px;
+  border-top: 1px solid var(--border-hairline);
+}
+
+.serving-chips-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.quick-add-macro-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.quick-add-macro-row > * {
+  min-width: 0;
+}
+
+.fuel-wave-card {
+  padding: 13px 15px;
+}
+
+.logged-item-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.inline-log-editor {
+  padding: 10px 11px;
+  border-radius: 11px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+}
+
+.diy-mix-box {
+  margin-top: 9px;
+  padding: 10px 11px;
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.86);
+  border: 1px solid var(--border-hairline);
+}
+
+.diy-mix-recipe {
+  margin-top: 6px;
+  font-size: 0.74rem;
+  line-height: 1.5;
+  color: var(--ink-primary);
+}
+
+.ride-pack-drawer {
+  margin-top: 7px;
+  padding: 11px;
+  border-radius: 11px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+}
+
+.pack-progress-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.pack-progress-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.pack-stepper-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 9px;
+  background: var(--bg-canvas);
+}
+
+.ride-schedule-box {
+  margin-top: 9px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: var(--bg-canvas);
+}
+
+.ride-schedule-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.72rem;
+  color: var(--ink-secondary);
+}
+
+.ride-schedule-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.micro-item-btn {
+  border: 1px solid transparent;
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+  font-family: inherit;
+  color: inherit;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.micro-item-btn:hover {
+  border-color: var(--border-strong);
+}
+
+.micro-item-btn.selected {
+  border-color: var(--code-high);
+  background: var(--code-high-bg);
+}
+
+.micro-drawer {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 11px;
+  background: var(--bg-canvas);
+  border: 1px solid var(--border-strong);
+}
+
+.micro-contributor-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.75rem;
+}
+
+.micro-contributor-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+

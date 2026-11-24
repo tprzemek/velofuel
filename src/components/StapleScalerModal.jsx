@@ -4,6 +4,10 @@ import { computeStapleNutrition, scaleStapleToTargets } from '../engine/fuelingE
 import { foodDisplayToGrams, foodUnitLabel, formatFoodAmount, gramsToFoodDisplay } from '../engine/units';
 import NumericInput from './NumericInput';
 
+function createStapleLogId() {
+  return `log-${Date.now()}`;
+}
+
 export default function StapleScalerModal({
   isOpen,
   onClose,
@@ -89,10 +93,11 @@ export default function StapleScalerModal({
       .join(' · ');
 
     onLogEntry({
-      id: `log-${Date.now()}`,
+      id: createStapleLogId(),
       slot: slotInfo.slot,
       type: 'staple',
       stapleId: selectedStaple.id,
+      resolvedItems: liveCalc.resolvedItems,
       title: selectedStaple.name,
       detail: formattedDetail,
       carbs: liveCalc.carbs,
